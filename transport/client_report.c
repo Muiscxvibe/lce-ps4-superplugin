@@ -47,6 +47,10 @@ static void sha_final(sha_ctx *c,uint8_t out[32]) {
     for (int i=0;i<8;++i) { out[4*i]=(uint8_t)(c->h[i]>>24); out[4*i+1]=(uint8_t)(c->h[i]>>16); out[4*i+2]=(uint8_t)(c->h[i]>>8); out[4*i+3]=(uint8_t)c->h[i]; }
 }
 void lce_sha256(const uint8_t *data,size_t len,uint8_t out[32]) { sha_ctx c; sha_init(&c); sha_update(&c,data,len); sha_final(&c,out); }
+_Static_assert(sizeof(sha_ctx)<=sizeof(lce_sha256_ctx),"lce_sha256_ctx too small");
+void lce_sha256_init(lce_sha256_ctx *c) { sha_init((sha_ctx *)c); }
+void lce_sha256_update(lce_sha256_ctx *c,const uint8_t *p,size_t n) { sha_update((sha_ctx *)c,p,n); }
+void lce_sha256_final(lce_sha256_ctx *c,uint8_t out[32]) { sha_final((sha_ctx *)c,out); }
 void lce_hmac_sha256(const uint8_t *key,size_t key_len,const uint8_t *msg,size_t len,uint8_t out[32]) {
     uint8_t k[64]={0},ipad[64],opad[64],inner[32]; sha_ctx c;
     if (key_len>64) lce_sha256(key,key_len,k); else memcpy(k,key,key_len);

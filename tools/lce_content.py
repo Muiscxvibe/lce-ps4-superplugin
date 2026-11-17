@@ -28,6 +28,39 @@ from pathlib import Path
 
 import nacl.signing
 
+AUDIT = Path('/home/codey/minecraft-ps4-research/skin-import/addon-audit/audit.py')
+
+
+def skin_meta(pck_path):
+    """LCE registration fields for a SkinPack.pck: DLC pack id (PACKID) and skin count."""
+    import importlib.util
+    spec = importlib.util.spec_from_file_location('lce_skin_audit', AUDIT)
+    audit = importlib.util.module_from_spec(spec); spec.loader.exec_module(audit)
+    data = Path(pck_path).read_bytes()
+    mappings, records, _, _ = audit.parse(data)
+    skins = [r for r in records if r['type'] == 0]
+    id_types = {m['type'] for m in mappings if m['name'].casefold() == 'packid'}
+    ids = {int(prm['name'].strip()) & 0xffffff for r in records for prm in r['parameters']
+           if prm['type'] in id_types and prm['name'].strip().isdecimal()}
+    if not skins or len(skins) > 256:
+        raise ValueError('skin pack has no skins or too many')
+    return {'skin_count': len(skins), 'pack_ids': sorted(ids)}
+
+
+def lce_block(repo, item_id, files, dlc_id=None):
+    if repo != 'skin-packs':
+        return None
+    pck = next((f for f in files if Path(f[0]).name == 'SkinPack.pck'), None)
+    if pck is None:
+        raise SystemExit('skin pack needs a SkinPack.pck')
+    meta = skin_meta(pck[0])
+    if dlc_id is None:
+        tail = item_id.rsplit('-', 1)[-1]
+        dlc_id = int(tail) if tail.isdecimal() else (meta['pack_ids'][0] if len(meta['pack_ids']) == 1 else None)
+    if not dlc_id or not 1 <= dlc_id <= 0xffffff:
+        raise SystemExit(f'cannot determine DLC pack id for {item_id}; pass --dlc-id')
+    return {'dlc_id': dlc_id, 'skin_count': meta['skin_count']}
+
 OWNER = 'Muiscxvibe'
 REPOS = {'mods': 'mod', 'texture-packs': 'texture-pack', 'maps': 'map', 'skin-packs': 'skin-pack'}
 ROOT = Path('/home/codey/minecraft-lce-work/content-repos')
@@ -142,13 +175,89 @@ def cmd_add(a):
             shutil.copyfile(src, dst)
             paths.append(str(dst))
         run(['gh', 'release', 'upload', tag, *paths, '--clobber', '--repo', f'{OWNER}/{a.repo}'])
+    lce = lce_block(a.repo, a.id, [(spec.split('#')[0], f['path']) for spec, f in zip(uploads, files)], a.dlc_id)
+    if lce and any(i.get('lce', {}).get('dlc_id') == lce['dlc_id'] and i['id'] != a.id for i in index['items']):
+        sys.exit(f"DLC pack id {lce['dlc_id']} already used in this catalog")
     index['items'] = [i for i in index['items'] if i['id'] != a.id]
-    index['items'].append({'id': a.id, 'name': a.name, 'version': a.version, 'description': a.desc or '',
-                           'files': files})
+    item = {'id': a.id, 'name': a.name, 'version': a.version, 'description': a.desc or '', 'files': files}
+    if lce:
+        item['lce'] = lce
+    index['items'].append(item)
     index['items'].sort(key=lambda i: i['id'])
     write_signed(d, index)
     commit_push(d, f'Publish {a.id} {a.version}')
     print(f'{a.repo}: published {a.id} {a.version} ({len(files)} files)')
+
+
+def cmd_meta(a):
+    """Add/refresh the lce block of an existing skin-pack item from a local copy of its SkinPack.pck."""
+    d = repo_dir(a.repo)
+    index = load_index(d, a.repo)
+    item = next((i for i in index['items'] if i['id'] == a.id), None)
+    if item is None:
+        sys.exit('no such item')
+    f = next((f for f in item['files'] if f['path'] == 'SkinPack.pck'), None)
+    if f is None or hashlib.sha256(Path(a.pck).read_bytes()).hexdigest() != f['sha256']:
+        sys.exit('local SkinPack.pck does not match the published file')
+    lce = lce_block(a.repo, a.id, [(a.pck, 'SkinPack.pck')], a.dlc_id)
+    if any(i.get('lce', {}).get('dlc_id') == lce['dlc_id'] and i['id'] != a.id for i in index['items']):
+        sys.exit(f"DLC pack id {lce['dlc_id']} already used")
+    item['lce'] = lce
+    write_signed(d, index)
+    commit_push(d, f'Registration metadata for {a.id}')
+    print(f"{a.repo}: {a.id} dlc_id={lce['dlc_id']} skins={lce['skin_count']}")
+
+
+PS4_FTP = ('192.168.1.175', 2121)
+PS4_PACKS = '/data/lce-mods/packs'
+
+
+def cmd_install_ps4(a):
+    """Download a published item, verify it against the signed catalog, upload it to the PS4."""
+    import ftplib, io, tempfile
+    d = repo_dir(a.repo)
+    data = (d / 'index.json').read_bytes()
+    pub = bytes.fromhex(Path(str(KEY).replace('.key', '.pub')).read_text().strip())
+    nacl.signing.VerifyKey(pub).verify(data, bytes.fromhex((d / 'index.json.sig').read_text().strip()))
+    item = next((i for i in json.loads(data)['items'] if i['id'] == a.id), None)
+    if item is None:
+        sys.exit('no such item')
+    if a.repo not in ('skin-packs', 'texture-packs'):
+        sys.exit('install-ps4 supports skin-packs and texture-packs')
+    tag = f"{item['id']}-v{item['version']}"
+    with tempfile.TemporaryDirectory() as work:
+        for f in item['files']:
+            asset = f.get('asset', f['path'])
+            run(['gh', 'release', 'download', tag, '--repo', f'{OWNER}/{a.repo}', '--pattern', asset, '--dir', work])
+            got = Path(work) / asset
+            if got.stat().st_size != f['size'] or hashlib.sha256(got.read_bytes()).hexdigest() != f['sha256']:
+                sys.exit(f'{asset}: size/hash does not match the signed catalog')
+        ftp = ftplib.FTP(); ftp.connect(*PS4_FTP, timeout=120); ftp.login()
+        def mkdirs(path):
+            cur = ''
+            for part in path.strip('/').split('/'):
+                cur += '/' + part
+                try: ftp.mkd(cur)
+                except ftplib.error_perm: pass
+        base = f"{PS4_PACKS}/{item['id']}"
+        for f in item['files']:
+            rel = f['path']; dest = f'{base}/{rel}'
+            mkdirs(dest.rsplit('/', 1)[0])
+            with open(Path(work) / f.get('asset', rel), 'rb') as src:
+                ftp.storbinary(f'STOR {dest}.part', src)
+            try: ftp.delete(dest)
+            except ftplib.error_perm: pass
+            ftp.rename(f'{dest}.part', dest)
+        lce = item.get('lce')
+        if lce:
+            pck = next(f for f in item['files'] if f['path'] == 'SkinPack.pck')
+            line = f"{lce['dlc_id']} {lce['skin_count']} {pck['size']} {pck['sha256']}\n".encode()
+            ftp.storbinary(f'STOR {base}/lce.desc.part', io.BytesIO(line))
+            try: ftp.delete(f'{base}/lce.desc')
+            except ftplib.error_perm: pass
+            ftp.rename(f'{base}/lce.desc.part', f'{base}/lce.desc')
+        ftp.quit()
+    print(f"installed {a.repo}/{item['id']} to the PS4 ({len(item['files'])} files{', registered at next launch' if item.get('lce') else ''})")
 
 
 def cmd_remove(a):
@@ -174,7 +283,12 @@ def main():
     sub = p.add_subparsers(dest='cmd', required=True)
     s = sub.add_parser('init'); s.add_argument('repo'); s.set_defaults(fn=cmd_init)
     s = sub.add_parser('add'); s.add_argument('repo'); s.add_argument('id'); s.add_argument('version'); s.add_argument('name')
-    s.add_argument('files', nargs='+'); s.add_argument('--desc', default=''); s.set_defaults(fn=cmd_add)
+    s.add_argument('files', nargs='+'); s.add_argument('--desc', default='')
+    s.add_argument('--dlc-id', type=int, default=None, help='skin packs: DLC pack id (default: numeric id suffix)')
+    s.set_defaults(fn=cmd_add)
+    s = sub.add_parser('meta'); s.add_argument('repo'); s.add_argument('id'); s.add_argument('pck')
+    s.add_argument('--dlc-id', type=int, default=None); s.set_defaults(fn=cmd_meta)
+    s = sub.add_parser('install-ps4'); s.add_argument('repo'); s.add_argument('id'); s.set_defaults(fn=cmd_install_ps4)
     s = sub.add_parser('remove'); s.add_argument('repo'); s.add_argument('id'); s.set_defaults(fn=cmd_remove)
     s = sub.add_parser('verify'); s.add_argument('repo'); s.set_defaults(fn=cmd_verify)
     a = p.parse_args()

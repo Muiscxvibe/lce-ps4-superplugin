@@ -1,3 +1,4 @@
+#include <string.h>
 // Thin C bridge to the plugin's Self action queue, compiled on its own because
 // the queue headers conflict with declarations already visible in debug_main.
 #include "/home/codey/minecraft-lce-work/r72-session-candidate/debug-player-cheats/self_action_queue.hpp"
@@ -149,8 +150,22 @@ extern "C" __attribute__((visibility("hidden"))) unsigned char lce_hook_submit_m
 // This server build ships no content mods: every startup mod choice (Steel,
 // skins, texture packs, Lucky Blocks, Java packs) reports disabled, so no mod
 // crafting tabs or Creative pages are installed.
-extern "C" __attribute__((visibility("hidden"))) int __wrap_mc195_selection_worker_startup_choice(const char *, int *enabled) {
+extern "C" int mc195_dyn_skins_present();
+extern "C" int mc195_dyn_skins_bind();
+// Every bundled content mod stays off. "gre-skins" (the user's own Gre pack)
+// is switched on only when downloaded skin packs are installed, because that
+// choice is what starts the game's content guards and title tick, which the
+// downloaded-pack registrar runs inside.
+extern "C" __attribute__((visibility("hidden"))) int __wrap_mc195_selection_worker_startup_choice(const char *id, int *enabled) {
  if (!enabled) return 0;
- *enabled = 0;
+ *enabled = (id && !strcmp(id, "gre-skins") && mc195_dyn_skins_present()) ? 1 : 0;
  return 1;
+}
+extern "C" int __real_mc195_gre_set_skin_enabled(int);
+// Called once at startup before the content guards start: schedule the
+// downloaded skin packs on the same title tick as the built-in packs.
+extern "C" __attribute__((visibility("hidden"))) int __wrap_mc195_gre_set_skin_enabled(int enabled) {
+ int r = __real_mc195_gre_set_skin_enabled(enabled);
+ if (r && enabled) (void)mc195_dyn_skins_bind();
+ return r;
 }
