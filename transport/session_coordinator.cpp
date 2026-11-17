@@ -47,6 +47,14 @@ bool Coordinator::configure(uintptr_t image,void *manager,
 }
 
 bool Coordinator::ready() const {
+    lock();
+    // A session that dropped mid-game stays FailedRetained until torn down.
+    // The Join menu polls ready(): once the game has left that session (the
+    // delayed disconnect has been reported), recover so the server is listed
+    // and joinable again without restarting the game.
+    const bool recover=phase_==Phase::FailedRetained && !disconnect_deadline_;
+    unlock();
+    if (recover) const_cast<Coordinator *>(this)->recover_retained();
     lock(); const bool result=phase_==Phase::Idle; unlock(); return result;
 }
 
