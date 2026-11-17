@@ -671,6 +671,44 @@ static bool install_packet_id_trace() {
 
 // Redirect both direct call paths to a process-lifetime relay. Installation is
 // deferred until the verified UI owner tick and an initialized account service.
+// Mini Games: the retail menu (0x9c13b0..0x9c1930) and the minigame Join/launch
+// logic of the load menu (0x9c6cc0..0x9c7650) ask the profile manager whether
+// the pad is signed in to PSN (vtable slot 12, +0x60) and otherwise show
+// "Public Games Unavailable" / "You are not currently signed in". LCE servers
+// need no PSN, so the slot answers "signed in" for calls returning into those
+// two functions only; every other caller gets the original answer. Game code
+// is not modified (the vtable entry is swapped atomically).
+using signed_in_fn = bool (*)(void *, int);
+static signed_in_fn profile_signed_in_original;
+static unsigned minigame_signed_in_logged;
+__attribute__((noinline)) static bool minigame_signed_in(void *self, int pad) {
+ const uintptr_t ra=(uintptr_t)__builtin_return_address(0)-game_base;
+ if((ra>=0x9c13b0 && ra<0x9c1930) || (ra>=0x9c6cc0 && ra<0x9c7650)) {
+  if(minigame_signed_in_logged<16) {
+   ++minigame_signed_in_logged;
+   char line[96];snprintf(line,sizeof line,"Mini Games sign-in check at rva=%lx answered online.\n",(unsigned long)ra);logline(line);
+  }
+  return true;
+ }
+ return profile_signed_in_original(self,pad);
+}
+static bool install_minigame_signin_hook() {
+ void *manager=*reinterpret_cast<void **>(game_base+0x147c988);
+ if(!manager)return false;
+ uintptr_t *slot=*reinterpret_cast<uintptr_t **>(manager)+12;
+ const uintptr_t original=__atomic_load_n(slot,__ATOMIC_ACQUIRE);
+ if(original<game_base || original>=game_base+0x1000000)return false;      // must be retail code
+ void *lo=nullptr,*hi=nullptr;int32_t prot=0;
+ if(sceKernelQueryMemoryProtection(slot,&lo,&hi,&prot) || (uintptr_t)lo>(uintptr_t)slot || (uintptr_t)hi<(uintptr_t)(slot+1))return false;
+ profile_signed_in_original=reinterpret_cast<signed_in_fn>(original);
+ const uintptr_t page=(uintptr_t)slot&~(uintptr_t)0x3fff;
+ if(!(prot&2) && sceKernelMprotect((void *)page,0x4000,prot|2))return false;
+ uintptr_t expected=original;
+ bool ok=__atomic_compare_exchange_n(slot,&expected,(uintptr_t)&minigame_signed_in,false,__ATOMIC_SEQ_CST,__ATOMIC_SEQ_CST);
+ int restore=(prot&2)?0:sceKernelMprotect((void *)page,0x4000,prot);
+ return ok && !restore;
+}
+
 static bool install_account_join_hook(int prot) {
  const uintptr_t words[2]={game_base+0xa67b60,game_base+0xa68228};
  const uint64_t originals[2]={0x00000028e95d5e41ull,0x07ebfffff962e8dfull};
@@ -944,6 +982,7 @@ extern "C" __attribute__((visibility("hidden"),noinline)) void observe(void *arg
               (uintptr_t)lo1<=word1 && (uintptr_t)hi1>=word1+8;
    bool installed=pages && install_account_join_hook(p0);
    logline(installed?"Account join hook installed.\n":"Account join hook installation failed; inspect rollback log.\n");
+   logline(install_minigame_signin_hook()?"Mini Games sign-in hook installed.\n":"Mini Games sign-in hook failed.\n");
    bool trace0=install_dialog_trace(0,0x9bd4d0,(uintptr_t)&dialog_trace_0);
    bool trace1=install_dialog_trace(1,0x9bd520,(uintptr_t)&dialog_trace_1);
    bool trace2=install_dialog_trace(2,0x9de300,(uintptr_t)&dialog_trace_2);
