@@ -46,5 +46,12 @@ int main(){
  assert(session.connection.outgoing.end-session.connection.outgoing.begin==6);
  assert(lce_native_bridge_tick(channel.bridge(),1)==LCE_SESSION_ACTIVE && received==1 && sent==1);
  assert(channel.stop() && wrappers[0].vptr==header+2 && closed==1);
+ // Rejoin: a new session on the same channel object must start again.
+ session.fd=5;session.state=LCE_SESSION_ACTIVE;
+ lce_connection_init(&session.connection,incoming,sizeof incoming,outgoing,sizeof outgoing);
+ session.connection.reader.has_id=1;session.connection.reader.assigned_id=4;
+ assert(channel.start(base,players,session,bridge_ops,failure,nullptr));
+ assert(wrappers[0].vptr!=header+2);
+ assert(channel.stop() && wrappers[0].vptr==header+2 && closed==2);
  assert(players.retire());std::free(memory);
 }

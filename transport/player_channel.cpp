@@ -12,8 +12,9 @@ bool Channel::start(uintptr_t image,lce_external_players::Players &players,
     attempted_=true;
     auto *original=reinterpret_cast<const uintptr_t *>(image+0x134aaa8);
     auto **vptr=reinterpret_cast<const uintptr_t **>(players.local());
-    if (*vptr!=original || !table_.prepare(image,original-2,
-            reinterpret_cast<uintptr_t>(&lce_player_send_hook))) return false;
+    // The clone is immutable for this image; a later session reuses it.
+    if (*vptr!=original || (!table_.address_point() && !table_.prepare(image,original-2,
+            reinterpret_cast<uintptr_t>(&lce_player_send_hook)))) return false;
     if (!lce_native_bridge_attach(&bridge_,&session,players.socket(),&ops)) return false;
     binding_={players.local(),players.host(),&bridge_,
               reinterpret_cast<lce_player_send_fn>(image+0xdfce70),failure,failure_context};
@@ -26,13 +27,17 @@ bool Channel::start(uintptr_t image,lce_external_players::Players &players,
     return true;
 }
 bool Channel::stop() {
-    if (!active_ || !local_ || !original_) return false;
+    // A failed start never leaves anything attached, so the next session may
+    // start again (rejoin after a dropped/ended session).
+    if (!active_ || !local_ || !original_) { attempted_=false; return false; }
     auto **vptr=reinterpret_cast<const uintptr_t **>(local_);
     if (__atomic_load_n(vptr,__ATOMIC_ACQUIRE)!=table_.address_point()) return false;
     __atomic_store_n(vptr,original_,__ATOMIC_RELEASE);
     lce_player_send_remove_binding(&binding_);
     lce_native_bridge_detach(&bridge_);
     active_=false;
+    attempted_=false;
+    local_=nullptr;
     return true;
 }
 }
