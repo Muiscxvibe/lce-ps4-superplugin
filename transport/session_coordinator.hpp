@@ -121,6 +121,9 @@ private:
     static void send_failure(void *);
     static int frame(void *, const uint8_t *, size_t);
     bool recover_retained();
+    // After an in-game transport failure the game socket is closed first and
+    // the session is reported disconnected a moment later (see fail()).
+    uint64_t disconnect_deadline_=0;
     bool fail(Error);
     bool defer_transport_cleanup(uint64_t,Error);
     bool is_server(const lce_servers::Server &) const;

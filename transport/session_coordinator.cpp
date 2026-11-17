@@ -202,7 +202,15 @@ bool Coordinator::fail(Error e) {
         // game stops ticking the connection and freezes in the world; it is
         // only marked disconnected if the socket cannot be closed.
         void *socket=players_.socket();
-        if (!socket || !lce_socket_native::close_client_end(socket)) state_.mark_disconnected();
+        if (socket && lce_socket_native::close_client_end(socket)) {
+            // Keep the worker alive briefly: once the game has seen the closed
+            // socket and begun leaving, report the session as ended so its
+            // "Exiting the game" step can complete.
+            disconnect_deadline_=ops_.monotonic_ms(ops_.context)+2000;
+            if (ops_.report_error) ops_.report_error(ops_.context,e);
+            return true;
+        }
+        state_.mark_disconnected();
     }
     if (ops_.report_error) ops_.report_error(ops_.context,e);
     return false;
@@ -218,6 +226,7 @@ bool Coordinator::recover_retained() {
     state_.deactivate();
     if (!players_.retire()) players_.abandon();
     lock();
+    disconnect_deadline_=0;
     phase_=Phase::Idle;
     error_=Error::None;
     transport_started_=false;
@@ -237,6 +246,13 @@ int Coordinator::frame(void *ctx,const uint8_t *,size_t) {
 bool Coordinator::worker_step(uint64_t gen) {
     lock();
     if (gen!=generation_) { unlock(); return false; }
+    if (disconnect_deadline_) {
+        const bool due=ops_.monotonic_ms(ops_.context)>=disconnect_deadline_;
+        if (due) disconnect_deadline_=0;
+        unlock();
+        if (due) state_.mark_disconnected();
+        return !due;
+    }
     const Phase current=phase_;
     const bool cancelled=cancel_requested_;
     const Error cleanup_error=cleanup_error_;
