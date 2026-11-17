@@ -7,9 +7,17 @@ namespace lce_account_config {
 struct Config { char url[512]; char device[65]; };
 
 // Four fixed lines: game host, game port, HTTPS URL and random device ID.
+// The host/port must match the first server entry.
 // Do not silently associate one server's account endpoint with another.
 inline bool parse(const char *data,size_t size,const lce_servers::List &servers,Config *out) {
-    if (!data || !out || !size || size>1024 || servers.count!=1) return false;
+    if (!data || !out || !size || size>1024 || servers.count<1) return false;
+    // Several servers may share this account endpoint only when they are on
+    // the same host as the first entry (one machine, one account service).
+    for (size_t k=1;k<servers.count;++k) {
+        size_t i=0;
+        for (; servers.entries[0].host[i] && servers.entries[k].host[i]==servers.entries[0].host[i]; ++i) {}
+        if (servers.entries[0].host[i] || servers.entries[k].host[i]) return false;
+    }
     const char *line[4]; size_t len[4]{}; size_t pos=0;
     for (unsigned i=0;i<4;++i) {
         line[i]=data+pos;

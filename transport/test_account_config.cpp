@@ -15,5 +15,13 @@ int main() {
     s=valid;s.insert(s.find("192.168.1.165:25567"),"user@");assert(!accepts(s));
     s=valid;s[s.size()-2]='g';assert(!accepts(s));
     s=valid+"extra\n";assert(!accepts(s));
-    servers.count=2;assert(!accepts(valid));
+    servers.count=2;assert(!accepts(valid));   // second entry has no host
+    // Extra servers on the same host share the account endpoint.
+    strcpy(servers.entries[1].host,"192.168.1.165");servers.entries[1].port=25570;
+    servers.count=3;strcpy(servers.entries[2].host,"192.168.1.165");servers.entries[2].port=25571;
+    assert(accepts(valid));
+    // A server on another host must not inherit this endpoint.
+    strcpy(servers.entries[2].host,"10.0.0.9");assert(!accepts(valid));
+    strcpy(servers.entries[2].host,"192.168.1.16");assert(!accepts(valid));
+    strcpy(servers.entries[2].host,"192.168.1.1650");assert(!accepts(valid));
 }
