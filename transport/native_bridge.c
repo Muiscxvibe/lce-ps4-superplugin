@@ -1,8 +1,12 @@
 #include "native_bridge.h"
 #include <limits.h>
+/* Optional plugin hook (weak: absent in the host tests). Returns nonzero when it
+   consumed a server->plugin control frame that must not reach the retail client. */
+extern int lce_remote_inbound_frame(const uint8_t *,size_t) __attribute__((weak));
 static int receive_frame(void *context,const uint8_t *data,size_t n) {
     lce_native_bridge *b=context;
     if (!b->attached || !b->socket || !n || n>UINT32_MAX) return 0;
+    if (lce_remote_inbound_frame && lce_remote_inbound_frame(data,n)) return 1;
     b->ops.push(b->socket,data,(uint32_t)n,1);
     return 1;
 }

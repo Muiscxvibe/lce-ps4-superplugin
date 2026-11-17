@@ -167,3 +167,5 @@ int lce_client_report_build(char *out,size_t cap,const char *device,uintptr_t ga
                                        lce_client_report_key,sizeof lce_client_report_key);
 }
 #endif
+
+const char *lce_client_report_plugin_build(void) { return LCE_PLUGIN_BUILD; }

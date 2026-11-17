@@ -1,5 +1,6 @@
 #include "content_download.h"
 #include "client_report.h"
+#include "tex_registry.h"
 #include <string.h>
 #include <stdio.h>
 
@@ -104,6 +105,23 @@ static int write_skin_desc(const lce_content_fs *fs, const char *root, const lce
     return 1;
 }
 
+/* Texture packs: lce.tex (see tex_registry.h), written last and atomically, from
+   the verified catalog item. Items without the four files the game needs are
+   plain downloads: no descriptor, a stale one is removed. */
+static int write_tex_desc(const lce_content_fs *fs, const char *root, const lce_catalog_item *item) {
+    char path[384], part[400], text[1100];
+    if ((size_t)snprintf(path, sizeof path, "%s/%s/" LCE_TEX_DESC_FILE, root, item->id) >= sizeof path) return 0;
+    size_t n = lce_tex_desc_format(item, text, sizeof text);
+    if (!n) { fs->unlink(fs->ctx, path); return 1; }
+    if ((size_t)snprintf(part, sizeof part, "%s.part", path) >= sizeof part) return 0;
+    int fd = fs->open_write(fs->ctx, part);
+    if (fd < 0) return 0;
+    int ok = fs->write(fs->ctx, fd, text, n) == 0;
+    fs->close(fs->ctx, fd);
+    if (!ok || fs->rename(fs->ctx, part, path) != 0) { fs->unlink(fs->ctx, part); return 0; }
+    return 1;
+}
+
 int lce_content_install_with(lce_content_getter get, void *gctx, const lce_content_fs *fs, const char *base,
                              const char *repo, const char *root, const lce_catalog_item *item) {
     char url[384], dest[384], part[400], dir[384];
@@ -134,6 +152,7 @@ int lce_content_install_with(lce_content_getter get, void *gctx, const lce_conte
         }
     }
     if (item->dlc_id && item->skin_count) return write_skin_desc(fs, root, item);
+    if (!strcmp(repo, "texture-packs")) return write_tex_desc(fs, root, item);
     return 1;
 }
 

@@ -1,4 +1,5 @@
 #include <string.h>
+#include "remote_nbt_abi.h"
 // Thin C bridge to the plugin's Self action queue, compiled on its own because
 // the queue headers conflict with declarations already visible in debug_main.
 #include "/home/codey/minecraft-lce-work/r72-session-candidate/debug-player-cheats/self_action_queue.hpp"
@@ -11,6 +12,26 @@ extern "C" __attribute__((visibility("hidden"))) void mc195_finish_remote_action
  self_player::queue().finish(ticket,result);
 }
 
+// Full-request variant for the server NBT/count bridge (remote_nbt.cpp): exposes the
+// count request fields and finishes with a CountReply read back from the server.
+extern "C" __attribute__((visibility("hidden"))) bool mc195_take_remote_request(lce_remote_req *out) {
+ self_player::Request request{};
+ if(!out || !self_player::queue().take(&request))return false;
+ out->action=request.action;out->item_id=request.item_id;out->ticket=request.ticket;
+ out->count_observation=request.count.observation;out->count_slot=request.count.slot;
+ out->count_expected=request.count.expected;out->count_desired=request.count.desired;
+ return true;
+}
+extern "C" __attribute__((visibility("hidden"))) void mc195_finish_remote_request(uint64_t ticket,unsigned result,const lce_remote_count_reply *count) {
+ if(!count || result!=1){self_player::queue().finish(ticket,result);return;}
+ self_player::CountReply reply{};
+ reply.observation=count->observation;reply.slot=count->slot;reply.count=count->count;reply.undo_available=count->undo_available;
+ reply.damage=count->damage;reply.damage_valid=count->damage_valid;
+ reply.enchant_valid=count->ench_valid;reply.enchant_count=(uint8_t)(count->ench_n<64?count->ench_n:64);
+ for(unsigned i=0;i<reply.enchant_count;++i){reply.enchantments[i].id=count->ench_id[i];reply.enchantments[i].level=count->ench_level[i];}
+ self_player::queue().finish(ticket,result,self_player::Readback{},reply);
+}
+
 // ---- Debug menu on a server: route supported actions to the server ----
 // Linked with --wrap so the prebuilt menu objects call these first. Off a
 // server (or for unsupported actions) everything falls through unchanged.
@@ -19,17 +40,38 @@ extern "C" bool mc195_remote_actions_active();
 extern "C" void mc195_remote_log(const char *);
 extern "C" bool mc195_remote_send_action(unsigned action, uint32_t item_id);
 extern "C" bool mc195_remote_send_action2(unsigned action, uint32_t a, uint32_t b);
+// Sends a raw "/lce-nbt ..." line (<=250 chars) -- see debug_main.item_diag.cpp part of this patch.
+extern "C" bool mc195_remote_send_text(const char *chat_line);
 namespace {
 bool server_supported(unsigned a) {
  switch (a) {
+ // player (already forwarded)
  case 17: case 18: case 19: case 20: case 21: case 22: case 23: case 24: case 26: case 27:
  case 54: case 55: case 58: case 59: case 65: case 67: case 68: case 70: case 72: case 73:
  case 74: case 75: case 80: case 81: case 82: case 83: case 89: case 90: case 91: case 92:
  case 108: case 109: case 142: case 149: case 150: case 171: case 172: case 173: case 174:
- case 175: case 176: case 177: case 178: case 188: return true;
+ case 175: case 176: case 177: case 178: case 188:
+ // item-tab quick gives (server: LceDebugCommand.h quickGiveItem)
+ case 25: case 29: case 39: case 40: case 41: case 42: case 43: case 44: case 45: case 46:
+ case 47: case 48: case 49: case 50: case 51: case 52: case 53:
+ // quick mob spawns, bosses, jockeys (no payload)
+ case 28: case 36: case 37: case 38: case 60: case 61: case 62: case 63:
+ case 114: case 115: case 116: case 117: case 118: case 119: case 145: case 146: case 148:
+ case 147: case 154: case 155:
+ // world: weather, time, rules, difficulty
+ case 6: case 7: case 8: case 9: case 10: case 11: case 12: case 76: case 77: case 78: case 79:
+ case 143: case 144: case 156: case 157: case 158: case 166: case 167: case 183: case 184:
+ case 191: case 192: case 196: case 197: case 198: case 199: case 205: case 206:
+ case 209: case 210: case 214: case 215: case 216: case 217:
+  return true;
  default: return false;
  }
 }
+}
+extern "C" __attribute__((visibility("hidden"))) bool mc195_remote_action_served(unsigned a) {
+ return server_supported(a) || a==64 || a==66 || a==247 || a==120 || a==124;
+}
+namespace {
 tab_actions::WeatherBackend original{};
 unsigned remote_result=0;
 bool remote_last=false;
@@ -125,6 +167,10 @@ extern "C" __attribute__((visibility("hidden"))) unsigned char lce_hook_submit(v
 // immediately through the wrapped backend poll.
 extern "C" unsigned char lce_body_submit_item_quantity(void *self, uint32_t item, uint32_t quantity, uint32_t epoch);
 extern "C" unsigned char lce_body_submit_mob(void *self, uint32_t mob, uint32_t epoch);
+extern "C" unsigned char lce_body_submit_sheep(void *self, uint32_t color, uint32_t epoch);
+extern "C" unsigned char lce_body_submit_animal_variant(void *self, uint32_t payload, uint32_t epoch);
+extern "C" bool lce_body_available_sheep(const void *self, uint32_t color, uint32_t epoch);
+extern "C" bool lce_body_available_animal_variant(const void *self, uint32_t payload, uint32_t epoch);
 static unsigned char remote_complete(void *self, bool sent) {
  if (!sent) return 2; // busy
  route_backend(self);
@@ -147,25 +193,62 @@ extern "C" __attribute__((visibility("hidden"))) unsigned char lce_hook_submit_m
  return lce_body_submit_mob(self, mob, epoch);
 }
 
+// Sheep colour (action 120) and animal variants (action 124) on a server. The server builds
+// the mob next to the player: sheep payload bits 0-3 colour, bit 4 baby, bit 5 sheared;
+// variant payload = registry id << 16 | selection. The server implements variants for wolf
+// (95), horse (100) and rabbit (101) only, so other ids stay unavailable here instead of
+// reporting a success that did not happen. Baby spawns (123) and villager variants (121/122)
+// have no Dispatcher entry points in the prebuilt menu object, so the UI never offers them.
+static bool variant_served(uint32_t payload) {
+ const uint32_t id=payload>>16;
+ return (id==95||id==100||id==101) && entity_actions_mobs::valid_animal_variant(payload);
+}
+extern "C" __attribute__((visibility("hidden"))) bool lce_hook_available_sheep(const void *self, uint32_t color, uint32_t epoch) {
+ if (mc195_remote_actions_active()) return color<=63 && *(static_cast<const unsigned char *>(self) + 0x60) == 0;
+ return lce_body_available_sheep(self, color, epoch);
+}
+extern "C" __attribute__((visibility("hidden"))) bool lce_hook_available_animal_variant(const void *self, uint32_t payload, uint32_t epoch) {
+ if (mc195_remote_actions_active()) return variant_served(payload) && *(static_cast<const unsigned char *>(self) + 0x60) == 0;
+ return lce_body_available_animal_variant(self, payload, epoch);
+}
+extern "C" __attribute__((visibility("hidden"))) unsigned char lce_hook_submit_sheep(void *self, uint32_t color, uint32_t epoch) {
+ if (mc195_remote_actions_active()) {
+  if (*(static_cast<unsigned char *>(self) + 0x60)) return 2;
+  if (color>63) return 1;
+  return remote_complete(self, mc195_remote_send_action2(120, color, 0));
+ }
+ return lce_body_submit_sheep(self, color, epoch);
+}
+extern "C" __attribute__((visibility("hidden"))) unsigned char lce_hook_submit_animal_variant(void *self, uint32_t payload, uint32_t epoch) {
+ if (mc195_remote_actions_active()) {
+  if (*(static_cast<unsigned char *>(self) + 0x60)) return 2;
+  if (!variant_served(payload)) return 1;
+  return remote_complete(self, mc195_remote_send_action2(124, payload, 0));
+ }
+ return lce_body_submit_animal_variant(self, payload, epoch);
+}
+
 // This server build ships no content mods: every startup mod choice (Steel,
 // skins, texture packs, Lucky Blocks, Java packs) reports disabled, so no mod
 // crafting tabs or Creative pages are installed.
 extern "C" int mc195_dyn_skins_present();
 extern "C" int mc195_dyn_skins_bind();
+extern "C" int mc195_dyn_textures_present();
+extern "C" int mc195_dyn_textures_bind();
 // Every bundled content mod stays off. "gre-skins" (the user's own Gre pack)
-// is switched on only when downloaded skin packs are installed, because that
-// choice is what starts the game's content guards and title tick, which the
-// downloaded-pack registrar runs inside.
+// is switched on only when downloaded skin packs or texture packs are installed,
+// because that choice is what starts the game's content guards and title tick,
+// which the downloaded-pack registrars run inside.
 extern "C" __attribute__((visibility("hidden"))) int __wrap_mc195_selection_worker_startup_choice(const char *id, int *enabled) {
  if (!enabled) return 0;
- *enabled = (id && !strcmp(id, "gre-skins") && mc195_dyn_skins_present()) ? 1 : 0;
+ *enabled = (id && !strcmp(id, "gre-skins") && (mc195_dyn_skins_present() | mc195_dyn_textures_present())) ? 1 : 0;
  return 1;
 }
 extern "C" int __real_mc195_gre_set_skin_enabled(int);
 // Called once at startup before the content guards start: schedule the
-// downloaded skin packs on the same title tick as the built-in packs.
+// downloaded skin and texture packs on the same title tick as the built-in packs.
 extern "C" __attribute__((visibility("hidden"))) int __wrap_mc195_gre_set_skin_enabled(int enabled) {
  int r = __real_mc195_gre_set_skin_enabled(enabled);
- if (r && enabled) (void)mc195_dyn_skins_bind();
+ if (r && enabled) { (void)mc195_dyn_skins_bind(); (void)mc195_dyn_textures_bind(); }
  return r;
 }

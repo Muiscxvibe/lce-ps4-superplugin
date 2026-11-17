@@ -27,6 +27,9 @@ int lce_client_report_format_hw(char *out, size_t cap, const char *device_id, co
                                 const char *game, const char *text_hex, const char *hw,
                                 const char *const *modules, size_t module_count, int debug,
                                 const uint8_t *key, size_t key_len);
+/* Build id this plugin was compiled as (e.g. "r8-anticheat-20261117222032"). */
+const char *lce_client_report_plugin_build(void);
+
 #ifdef __cplusplus
 }
 #endif

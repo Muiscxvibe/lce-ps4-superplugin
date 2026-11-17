@@ -16,17 +16,17 @@ extern "C" uintptr_t mc195_super_expected_base();
 #include "tab_site_guard.hpp"
 #include "monitor_mailbox.hpp"
 #if defined(MC_LEGACY195) && defined(MC_SUPER195)
-#include "/home/codey/minecraft-lce-work/ps4-transport/session_runtime.hpp"
-#include "/home/codey/minecraft-lce-work/ps4-transport/native_keyboard.hpp"
-#include "/home/codey/minecraft-lce-work/ps4-transport/account_flow.hpp"
-#include "/home/codey/minecraft-lce-work/ps4-transport/client_report.h"
-#include "/home/codey/minecraft-lce-work/ps4-transport/account_join_route.hpp"
-#include "/home/codey/minecraft-lce-work/ps4-transport/orbis_auth.h"
-#include "/home/codey/minecraft-lce-work/ps4-transport/account_config.hpp"
-#include "/home/codey/minecraft-lce-work/ps4-transport/selection_lookup.hpp"
-#include "/home/codey/minecraft-lce-work/ps4-transport/login_gui.hpp"
+#include "session_runtime.hpp"
+#include "native_keyboard.hpp"
+#include "account_flow.hpp"
+#include "client_report.h"
+#include "account_join_route.hpp"
+#include "orbis_auth.h"
+#include "account_config.hpp"
+#include "selection_lookup.hpp"
+#include "login_gui.hpp"
 #if defined(MC_METADATA_SNAPSHOT)
-#include "/home/codey/minecraft-lce-work/ps4-transport/native_metadata_snapshot.h"
+#include "native_metadata_snapshot.h"
 #include "/home/codey/minecraft-lce-work/ps4-metadata-snapshot/item-audit-build/native_metadata_snapshot_extended.h"
 #endif
 #include <fcntl.h>
@@ -56,6 +56,7 @@ static unsigned count, first_tid, other_tid, resident; static OrbisPthread worke
 static uintptr_t game_base;
 static void logline(const char *s);
 extern "C" void lce_vtable_trace_poll();
+extern "C" void lce_plugin_update_tick();
 static void notify_user(const char *message);
 #if defined(MC_LEGACY195) && defined(MC_SUPER195)
 inline void *operator new(size_t,void *storage) noexcept { return storage; }
@@ -201,6 +202,18 @@ static void account_bootstrap(void *,uint64_t) {
  if(ok)logline("Account HTTPS context initialized.\n");
  else {char line[160];snprintf(line,sizeof line,"Account bootstrap failed step=%u native_stage=%d error=%x ssl_import=%d http_import=%d.\n",step,account_network.stage,(unsigned)account_network.native_error,account_network.ssl_import_error,account_network.http_import_error);logline(line);}
 }
+// ---- Mods menu content downloads (mods_content.cpp) ----
+// The mirror is served by the account service host, so downloads reuse its HTTPS
+// context and pinned CA. Only available after the account bootstrap succeeded.
+extern "C" __attribute__((visibility("hidden"))) const char *lce_mods_net(const lce_https_api **api,const lce_https_trust **trust) {
+ if(__atomic_load_n(&account_bootstrap_state,__ATOMIC_ACQUIRE)!=2 || !account_network.ready || !account_url[0])return nullptr;
+ *api=&account_network.api;*trust=&account_network.trust;return account_url;
+}
+// Runs on the shared worker (one task at a time; false while it is busy).
+extern "C" __attribute__((visibility("hidden"))) bool lce_mods_schedule(void (*task)(void *,uint64_t),void *ctx) {
+ return account_schedule(nullptr,task,ctx,0);
+}
+extern "C" __attribute__((visibility("hidden"))) void lce_mods_notify(const char *message) { notify_user(message); }
 static bool account_join_ready(void *) {
  return session_start_hook_ready && __atomic_load_n(&account_bootstrap_state,__ATOMIC_ACQUIRE)==2 && account_network.ready && session_runtime && session_runtime->configured() &&
         session_runtime->status().published && session_runtime->coordinator().ready();
@@ -288,20 +301,17 @@ static void account_join_report(void *,bool accepted) {
 // the server executes them with its own authority (operators only).
 extern "C" bool mc195_take_remote_action(unsigned *action, uint32_t *item_id, uint64_t *ticket);
 extern "C" void mc195_finish_remote_action(uint64_t ticket, unsigned result);
+extern "C" void lce_remote_pump(void);
+// Drives the server NBT / count bridge (remote_nbt.cpp): plain actions go out as "/lce-action",
+// count/damage transactions and the held-item NBT viewer use "/lce-nbt" with server read-back.
 static void forward_remote_debug_actions() {
- if(!session_runtime || !session_runtime->configured())return;
- auto &coordinator=session_runtime->coordinator();
- if(coordinator.phase()!=lce_session_coordinator::Phase::Active)return;
- if(!__atomic_load_n(&server_debug_allowed,__ATOMIC_ACQUIRE))return;
- unsigned action=0;uint32_t item_id=0;uint64_t ticket=0;
- if(!mc195_take_remote_action(&action,&item_id,&ticket))return;
- char text[48];
- int n=snprintf(text,sizeof text,"/lce-action %u %u",action,(unsigned)item_id);
- uint8_t packet[3+2*48];size_t used=0;
- packet[used++]=0xde;packet[used++]=(uint8_t)(n>>8);packet[used++]=(uint8_t)n;
- for(int i=0;i<n;++i){packet[used++]=0;packet[used++]=(uint8_t)text[i];}
- const bool sent=n>0 && coordinator.send_game_packet(packet,used);
- mc195_finish_remote_action(ticket,sent?1u:2u);
+ static bool was_active;
+ const bool active=session_runtime && session_runtime->configured() &&
+  session_runtime->coordinator().phase()==lce_session_coordinator::Phase::Active &&
+  __atomic_load_n(&server_debug_allowed,__ATOMIC_ACQUIRE);
+ if(!active && !was_active)return;
+ was_active=active;
+ lce_remote_pump();
 }
 extern "C" __attribute__((visibility("hidden"))) void mc195_remote_log(const char *m) { logline(m); }
 extern "C" __attribute__((visibility("hidden"))) bool mc195_remote_actions_active() {
@@ -321,6 +331,17 @@ extern "C" __attribute__((visibility("hidden"))) bool mc195_remote_send_action2(
  uint8_t packet[3+2*48];size_t used=0;
  packet[used++]=0xde;packet[used++]=(uint8_t)(n>>8);packet[used++]=(uint8_t)n;
  for(int i=0;i<n;++i){packet[used++]=0;packet[used++]=(uint8_t)text[i];}
+ return session_runtime->coordinator().send_game_packet(packet,used);
+}
+// Raw chat line to the server (used for "/lce-nbt ..." NBT editor requests, up to 250 chars:
+// the server reads the chat packet with readUtf(256)). Same gating as the action senders.
+extern "C" __attribute__((visibility("hidden"))) bool mc195_remote_send_text(const char *line) {
+ if(!line||!mc195_remote_actions_active())return false;
+ size_t n=0; while(line[n] && n<=250)++n;
+ if(n==0||n>250)return false;
+ static uint8_t packet[3+2*250];size_t used=0;
+ packet[used++]=0xde;packet[used++]=(uint8_t)(n>>8);packet[used++]=(uint8_t)n;
+ for(size_t i=0;i<n;++i){packet[used++]=0;packet[used++]=(uint8_t)line[i];}
  return session_runtime->coordinator().send_game_packet(packet,used);
 }
 extern "C" __attribute__((visibility("hidden"))) bool mc195_remote_send_action(unsigned action,uint32_t item_id) {
@@ -1006,6 +1027,7 @@ extern "C" __attribute__((visibility("hidden"),noinline)) void observe(void *arg
   }
   account_gui.tick();
   lce_vtable_trace_poll();
+  lce_plugin_update_tick();
   if(account_route)account_route->tick();
   if(account_route && session_runtime && session_runtime->configured() &&
      session_runtime->status().published && !__atomic_load_n(&account_bootstrap_state,__ATOMIC_ACQUIRE)) {

@@ -22,6 +22,24 @@ if texts:
 m['current'] = build
 json.dump(m, open('official-builds.json', 'w'), indent=2)
 PY
+# Signed auto-update channel (served by the server's content mirror as repo "plugin"):
+# index.json + index.json.sig at the repo root, PRX attached to release "session-plugin-v<version>".
+version=$(echo "$build" | grep -oE '[0-9]{14}$')
+python3 - "$prx" "$version" "$build" <<'PY2'
+import hashlib, json, sys
+from pathlib import Path
+sys.path.insert(0, 'tools')
+import lce_content
+prx, version, build = Path(sys.argv[1]), sys.argv[2], sys.argv[3]
+data = prx.read_bytes()
+index = {'schema': 1, 'repo': 'plugin', 'type': 'plugin', 'items': [{
+    'id': 'session-plugin', 'name': 'LCE Server plugin', 'version': version,
+    'description': 'Official build ' + build,
+    'files': [{'path': 'mc195_lce_session.prx', 'asset': 'mc195_lce_session.prx', 'size': len(data),
+               'sha256': hashlib.sha256(data).hexdigest(),
+               'url': f'https://github.com/Muiscxvibe/lce-ps4-superplugin/releases/download/session-plugin-v{version}/mc195_lce_session.prx'}]}]}
+lce_content.write_signed(Path('.'), index)
+PY2
 git add -A
 git commit -q -m "Publish plugin build $build" || true
 git push -q origin HEAD:main
@@ -30,4 +48,9 @@ gh release create "$build" "/tmp/mc195_lce_session_${build}.prx" --title "$build
   --notes "Official LCE Server plugin build $build (PRX sha256 $sha)" >/dev/null 2>&1 \
   || gh release upload "$build" "/tmp/mc195_lce_session_${build}.prx" --clobber
 rm -f "/tmp/mc195_lce_session_${build}.prx"
+stage=$(mktemp -d); cp "$prx" "$stage/mc195_lce_session.prx"
+gh release create "session-plugin-v$version" "$stage/mc195_lce_session.prx" --title "Auto-update $build" \
+  --notes "Signed auto-update channel for $build" >/dev/null 2>&1 \
+  || gh release upload "session-plugin-v$version" "$stage/mc195_lce_session.prx" --clobber
+rm -rf "$stage"
 echo "published $build ($sha)"

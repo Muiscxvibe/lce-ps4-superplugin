@@ -1,7 +1,7 @@
 /* Host test: lce.desc parsing, packs-folder scan, catalog "lce" block, and the
  * installer -> lce.desc -> scan round trip. Build:
  *   clang -std=c11 -D_DEFAULT_SOURCE -fsanitize=address,undefined -I. -I../third_party/monocypher \
- *     test_skin_registry.c skin_registry.c content_catalog.c content_download.c client_report.c \
+ *     test_skin_registry.c skin_registry.c tex_registry.c content_catalog.c content_download.c client_report.c \
  *     ../third_party/monocypher/monocypher.c ../third_party/monocypher/monocypher-ed25519.c
  */
 #include "skin_registry.h"

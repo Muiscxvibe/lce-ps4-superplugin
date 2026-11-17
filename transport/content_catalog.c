@@ -246,10 +246,11 @@ int lce_catalog_file_ok(const lce_catalog_file *f, const uint8_t *data, size_t l
 
 int lce_catalog_install_path(char *out, size_t cap, const char *root, const char *repo,
                              const lce_catalog_item *item, const lce_catalog_file *f) {
-    static const char *const repos[] = {"mods", "texture-packs", "maps", "skin-packs"};
+    /* "plugin" is the signed session-plugin update channel (auto-update). */
+    static const char *const repos[] = {"mods", "texture-packs", "maps", "skin-packs", "plugin"};
     int known = 0;
     if (!out || !cap || !root || !repo || !item || !f) return 0;
-    for (unsigned i = 0; i < 4; ++i) if (!strcmp(repo, repos[i])) known = 1;
+    for (unsigned i = 0; i < 5; ++i) if (!strcmp(repo, repos[i])) known = 1;
     if (!known || !id_ok(item->id) || !relpath_ok(f->path)) return 0;
     size_t need = strlen(root) + 1 + strlen(item->id) + 1 + strlen(f->path) + 1;
     if (need > cap) return 0;
