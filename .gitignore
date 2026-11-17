@@ -1,0 +1,6 @@
+# Anticheat signing key: generated at build time, never committed.
+client_report_key.h
+*.key
+build/
+*.o
+*.before-*
