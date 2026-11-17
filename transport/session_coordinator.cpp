@@ -196,11 +196,13 @@ bool Coordinator::fail(Error e) {
     }
     unlock();
     if (disconnected) {
-        state_.mark_disconnected();
         // Let the game notice: a closed client end makes Connection::tick
-        // disconnect with "connection lost" and return to the menu instead
-        // of freezing in a world whose packets are no longer handled.
-        if (void *socket=players_.socket()) lce_socket_native::close_client_end(socket);
+        // disconnect with "connection lost" and return to the menu. The
+        // session must keep reporting "in session" meanwhile, otherwise the
+        // game stops ticking the connection and freezes in the world; it is
+        // only marked disconnected if the socket cannot be closed.
+        void *socket=players_.socket();
+        if (!socket || !lce_socket_native::close_client_end(socket)) state_.mark_disconnected();
     }
     if (ops_.report_error) ops_.report_error(ops_.context,e);
     return false;
