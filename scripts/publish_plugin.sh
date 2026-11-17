@@ -23,7 +23,7 @@ m['current'] = build
 json.dump(m, open('official-builds.json', 'w'), indent=2)
 PY
 git add -A
-git commit -q -m "Publish plugin build $build" -m "Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>" || true
+git commit -q -m "Publish plugin build $build" || true
 git push -q origin HEAD:main
 cp "$prx" "/tmp/mc195_lce_session_${build}.prx"
 gh release create "$build" "/tmp/mc195_lce_session_${build}.prx" --title "$build" \
