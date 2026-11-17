@@ -18,6 +18,7 @@ struct Replacements {
     uintptr_t in_session = 0;
     uintptr_t in_gameplay = 0;
     uintptr_t ready_to_play_or_idle = 0;
+    uintptr_t quick_match = 0;
 };
 class Vtable {
 public:

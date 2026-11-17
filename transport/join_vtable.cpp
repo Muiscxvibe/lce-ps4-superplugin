@@ -1,4 +1,7 @@
 #include "join_vtable.hpp"
+// Optional diagnostic: when the plugin links a tracer, every slot this clone
+// does not replace is routed through a pass-through thunk that records calls.
+extern "C" __attribute__((weak)) void lce_vtable_trace_install(uintptr_t *slots, unsigned count, const unsigned char *replaced);
 namespace lce_join_hook {
 namespace {
 constexpr uintptr_t expected[Vtable::slots] = {
@@ -38,6 +41,12 @@ bool Vtable::prepare(uintptr_t base, const uintptr_t *source, Replacements hooks
     if (hooks.in_session) words_[2 + 20] = hooks.in_session;
     if (hooks.in_gameplay) words_[2 + 21] = hooks.in_gameplay;
     if (hooks.ready_to_play_or_idle) words_[2 + 22] = hooks.ready_to_play_or_idle;
+    if (hooks.quick_match) words_[2 + 31] = hooks.quick_match;
+    if (lce_vtable_trace_install) {
+        unsigned char replaced[slots];
+        for (size_t i = 0; i < slots; ++i) replaced[i] = words_[i + 2] != snapshot[i + 2];
+        lce_vtable_trace_install(words_ + 2, slots, replaced);
+    }
     prepared_ = true;
     return true;
 }

@@ -55,6 +55,7 @@ EXPORT uint32_t g_pluginVersion=1;
 static unsigned count, first_tid, other_tid, resident; static OrbisPthread worker;
 static uintptr_t game_base;
 static void logline(const char *s);
+extern "C" void lce_vtable_trace_poll();
 static void notify_user(const char *message);
 #if defined(MC_LEGACY195) && defined(MC_SUPER195)
 inline void *operator new(size_t,void *storage) noexcept { return storage; }
@@ -71,6 +72,8 @@ static lce_account_join::Route *account_route=nullptr;
 static lce_login_gui::Gui account_gui;
 static native_menu::Slot *account_gui_slot=nullptr;
 static unsigned account_gui_request=0,account_gui_index=0;
+static unsigned account_minigame_join=0;
+static unsigned account_saved_loaded_index=0;
 static int account_gui_pad=-1;
 static char account_pending_save_name[17]{};
 static unsigned account_pending_save_index=0;
@@ -222,17 +225,23 @@ static bool account_saved_valid(const AccountSaved &v,unsigned index) {
 }
 static bool account_gui_load(void *,char *name,size_t namesize,char *token,size_t tokensize) {
  account_saved_exists=false;if(namesize<17 || tokensize<44)return false;
- char path[96];account_saved_path(path,sizeof path,account_gui_index);
- int fd=sceKernelOpen(path,O_RDONLY|O_NOFOLLOW,0);if(fd<0)return false;
+ unsigned index=account_gui_index;
+ char path[96];account_saved_path(path,sizeof path,index);
+ int fd=sceKernelOpen(path,O_RDONLY|O_NOFOLLOW,0);
+ // Minigame servers share the main server's accounts: reuse its saved login.
+ if(fd<0 && index<session_servers.count && session_servers.entries[index].minigame>=0) {
+  index=0;account_saved_path(path,sizeof path,index);fd=sceKernelOpen(path,O_RDONLY|O_NOFOLLOW,0);
+ }
+ if(fd<0)return false;
  AccountSaved value{};size_t got=sceKernelRead(fd,&value,sizeof value);char extra;
  size_t tail=sceKernelRead(fd,&extra,1);bool closed=sceKernelClose(fd)>=0;
- bool ok=got==sizeof value && tail==0 && closed && account_saved_valid(value,account_gui_index);
- if(ok){memcpy(name,value.name,17);memcpy(token,value.token,44);account_saved_exists=true;}
+ bool ok=got==sizeof value && tail==0 && closed && account_saved_valid(value,index);
+ if(ok){memcpy(name,value.name,17);memcpy(token,value.token,44);account_saved_exists=true;account_saved_loaded_index=index;}
  lce_auth_wipe(&value,sizeof value);return ok;
 }
 static bool account_gui_forget(void *) {
  if(!account_saved_exists)return true;
- char path[96];account_saved_path(path,sizeof path,account_gui_index);
+ char path[96];account_saved_path(path,sizeof path,account_saved_loaded_index);
  if(sceKernelUnlink(path)<0){notify_user("Could not remove saved login details.");return false;}
  account_saved_exists=false;return true;
 }
@@ -258,9 +267,17 @@ static bool account_join_begin(void *,const lce_servers::Server &server,int pad,
  if(account_pending_save_name[0] && !account_save_token(account_pending_save_index,account_pending_save_name,result.token))
   notify_user("Could not save login details; please enter them next time.");
  lce_auth_wipe(account_pending_save_name,sizeof account_pending_save_name);
+ if(__atomic_exchange_n(&account_minigame_join,0u,__ATOMIC_ACQ_REL)) {
+  // Mini Games quick-match: the game is already waiting for a session, so join
+  // directly with the ticket instead of driving the Join menu's native join.
+  const bool ok=session_runtime && session_runtime->coordinator().join_authenticated(server,1<<pad,pad,result)==0;
+  logline(ok?"Mini Games join: authenticated, connecting.\n":"Mini Games join: authenticated join failed to start.\n");
+  return ok;
+ }
  return session_runtime && session_runtime->coordinator().join_authenticated_native(server,pad,result)==0;
 }
 static void account_join_report(void *,bool accepted) {
+ __atomic_store_n(&account_minigame_join,0u,__ATOMIC_RELEASE);
  lce_auth_wipe(account_pending_save_name,sizeof account_pending_save_name);
  const char *server_message=lce_auth_last_error();
  if(!accepted && server_message && server_message[0]) {notify_user(server_message);return;}
@@ -373,7 +390,18 @@ static bool account_gui_connect(void *,const char *username,const char *secret,b
 }
 static bool account_gui_queue(unsigned index,int pad) {
  if(account_gui_request || (account_gui.state()!=lce_login_gui::State::Idle && account_gui.state()!=lce_login_gui::State::Done))return false;
- account_gui_index=index;account_gui_pad=pad;account_gui_request=1;return true;
+ account_gui_index=index;account_gui_pad=pad;account_gui_request=1;
+ __atomic_store_n(&account_minigame_join,0u,__ATOMIC_RELEASE);   // set again by lce_minigame_join
+ return true;
+}
+// Called from the platform quick-match hook (game thread) for a configured
+// minigame server: run the normal login flow, then join that server.
+extern "C" int lce_minigame_join(unsigned index,int pad) {
+ if(index>=session_servers.count || !account_join_ready(nullptr))return 1;
+ if(!account_gui_queue(index,pad))return 1;
+ __atomic_store_n(&account_minigame_join,1u,__ATOMIC_RELEASE);
+ logline("Mini Games join: login requested.\n");
+ return 0;
 }
 extern "C" __attribute__((visibility("hidden"))) int mc195_account_select(void *record,int pad) {
  if(!account_route) {uint32_t index=0;return lce_join_list::endpoint_index(record,&index)?2:0;}
@@ -683,14 +711,28 @@ static signed_in_fn profile_signed_in_original;
 static unsigned minigame_signed_in_logged;
 __attribute__((noinline)) static bool minigame_signed_in(void *self, int pad) {
  const uintptr_t ra=(uintptr_t)__builtin_return_address(0)-game_base;
- if((ra>=0x9c13b0 && ra<0x9c1930) || (ra>=0x9c6cc0 && ra<0x9c7650)) {
+ static uint64_t minigame_flow_until=0;
+ const uint64_t now=sceKernelGetProcessTime();
+ bool minigame=(ra>=0x9c13b0 && ra<0x9c1930) || (ra>=0x9c6cc0 && ra<0x9c7650);
+ if(ra>=0x9c6cc0 && ra<0x9c7650)minigame_flow_until=now+120000000ull;
+ // CGameNetworkManager's session start (0x9455a0) repeats the check; answer
+ // online there only while a Mini Games launch from the load menu is active.
+ if(ra==0x9455f1 && now<minigame_flow_until){minigame=true;minigame_flow_until=0;}
+ if(minigame) {
   if(minigame_signed_in_logged<16) {
    ++minigame_signed_in_logged;
-   char line[96];snprintf(line,sizeof line,"Mini Games sign-in check at rva=%lx answered online.\n",(unsigned long)ra);logline(line);
+   char line[96];snprintf(line,sizeof line,"Mini Games sign-in check at rva=%x answered online.\n",(unsigned)ra);logline(line);
   }
   return true;
  }
  return profile_signed_in_original(self,pad);
+}
+extern "C" void lce_quick_match_log(int mask,int a,int type_attr,int count,int result) {
+ char line[160];
+ snprintf(line,sizeof line,"Mini Games quick-match: mask=%x arg=%x type=%u attr=%x extra=%d -> %s (%d).\n",
+          (unsigned)mask,(unsigned)a,(unsigned)type_attr,(unsigned)type_attr,count,
+          result<0?"no LCE server for this type, Sony search":"joining LCE server",result);
+ logline(line);
 }
 static bool install_minigame_signin_hook() {
  void *manager=*reinterpret_cast<void **>(game_base+0x147c988);
@@ -963,6 +1005,7 @@ extern "C" __attribute__((visibility("hidden"),noinline)) void observe(void *arg
    if(!account_gui.start(gui_ops))notify_user("Server login is unavailable.");
   }
   account_gui.tick();
+  lce_vtable_trace_poll();
   if(account_route)account_route->tick();
   if(account_route && session_runtime && session_runtime->configured() &&
      session_runtime->status().published && !__atomic_load_n(&account_bootstrap_state,__ATOMIC_ACQUIRE)) {

@@ -15,6 +15,7 @@ lce_join_adapter::Ops Install::make_ops(uintptr_t b,const lce_join_list::Ops &ro
     result.native_list=fn<decltype(result.native_list)>(b,0xde0c70);
     result.native_join=fn<decltype(result.native_join)>(b,0xde0450);
     result.native_full_info=fn<decltype(result.native_full_info)>(b,0xde0f20);
+    result.native_quick_match=fn<decltype(result.native_quick_match)>(b,0xde04e0);
     result.backend_ready=ready; result.backend_join=join; result.backend_full_info=info;
     result.may_append_rows=may_append_rows; result.row_gate_context=row_gate_context;
     return result;

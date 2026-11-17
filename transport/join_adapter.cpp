@@ -1,4 +1,7 @@
 #include "join_adapter.hpp"
+// Optional plugin hook: authenticate (saved login or keyboard) and then join
+// minigame server `index` asynchronously. Returns 0 when the flow started.
+extern "C" __attribute__((weak)) int lce_minigame_join(unsigned index, int pad);
 
 namespace lce_join_adapter {
 Adapter::Adapter(const lce_servers::List &servers, const Ops &ops) : servers_(servers), ops_(ops) {
@@ -26,6 +29,7 @@ lce_join_list::Vector *Adapter::get_list(void *manager, int pad, int locals, boo
     // the untouched native result.
     if (ops_.may_append_rows && !ops_.may_append_rows(ops_.row_gate_context)) return list;
     for (size_t i = 0; i < servers_.count; ++i) {
+        if (servers_.entries[i].minigame >= 0) continue;   // Mini Games only
         (void)lce_join_list::append(list, servers_.entries[i].label,
                                    static_cast<uint32_t>(i), 0, true, ops_.rows);
     }
@@ -40,6 +44,20 @@ int Adapter::join(void *manager, void *row, int mask, int primary) {
     uint32_t stale_index;
     if (lce_join_list::endpoint_index(row, &stale_index)) return 1;
     return ops_.native_join ? ops_.native_join(manager, row, mask, primary) : 1;
+}
+int Adapter::quick_match(int mask, int type) {
+    if (!ready()) return -1;
+    for (size_t i = 0; i < servers_.count; ++i) {
+        if (servers_.entries[i].minigame != type) continue;
+        int primary = 0;
+        while (primary < 4 && !(mask & (1 << primary))) ++primary;
+        if (primary == 4) primary = 0;
+        // The launch passes extra bits beside the primary pad (seen: 3 with one
+        // controller); LCE sessions carry exactly one local player.
+        if (lce_minigame_join) return lce_minigame_join(static_cast<unsigned>(i), primary);
+        return ops_.backend_join(servers_.entries[i], 1 << primary, primary);
+    }
+    return -1;
 }
 void Adapter::full_info(void *manager, void *row, Complete complete, void *context) {
     size_t index;

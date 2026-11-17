@@ -50,6 +50,23 @@ int main() {
     assert(adapter.join(nullptr, own, 1, 0) == 0 && backend_calls == 1);
     result = false; adapter.full_info(nullptr, own, complete, &result);
     assert(result && backend_calls == 2 && complete_calls == 2);
+    {   // minigame servers: hidden from the Join list, joined by quick-match
+        lce_servers::List mg = servers; mg.count = 2;
+        std::strcpy(mg.entries[1].label, "Battle"); std::strcpy(mg.entries[1].host, "192.168.1.165");
+        mg.entries[1].port = 25565; mg.entries[1].minigame = 3;   // fake backend checks host:port
+        Adapter m(mg, ops); auto n0 = rows.end - rows.begin; int native_before = native_calls;
+        (void)m.get_list(nullptr, 0, 1, false);
+        assert(rows.end - rows.begin == n0 + 1);           // only the normal server
+        while (rows.end - rows.begin > n0) {                // drop the added row again
+            void *r = rows.end[-1], *label;
+            std::memcpy(&label, static_cast<char *>(r) + 0xb0, sizeof label);
+            release(label); release(r); --rows.end;
+        }
+        int before = backend_calls;
+        assert(m.quick_match(1, 3) == 0 && backend_calls == before + 1);
+        assert(m.quick_match(1, 4) == -1 && backend_calls == before + 1);
+        backend_calls = before; native_calls = native_before;   // keep later counts unchanged
+    }
     // Minecraft can discard a refreshed duplicate but keep the old row.
     assert(adapter.get_list(nullptr,0,1,false)==&rows && rows.end-rows.begin==2);
     void *duplicate=rows.begin[1], *duplicate_label;

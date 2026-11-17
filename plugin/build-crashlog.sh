@@ -34,6 +34,7 @@ done
 for name in orbis_socket orbis_binding orbis_session session_transport connection framing send_queue native_bridge player_send_hook auth_client auth_https orbis_auth gateway_handshake; do
  clang "${flags[@]}" -std=c11 -Wall -Wextra -Werror -I"$transport" -c "$transport/$name.c" -o "/home/codey/minecraft-lce-work/ps4-metadata-snapshot/crashlog-build/build/lce_$name.o"
 done
+clang "${flags[@]}" -std=c11 -Wall -Wextra -Werror -c /home/codey/minecraft-lce-work/ps4-metadata-snapshot/crashlog-build/vtable_trace.c -o /home/codey/minecraft-lce-work/ps4-metadata-snapshot/crashlog-build/build/lce_vtable_trace.o
 clang "${flags[@]}" -std=c11 -Wall -Wextra -Werror -c /home/codey/minecraft-lce-work/ps4-metadata-snapshot/crashlog-build/goldhen_ids.c -o /home/codey/minecraft-lce-work/ps4-metadata-snapshot/crashlog-build/build/lce_goldhen_ids.o
 clang "${flags[@]}" -std=c11 -Wall -Wextra -Werror -I"$transport" -c "$transport/skin_registry.c" -o /home/codey/minecraft-lce-work/ps4-metadata-snapshot/crashlog-build/build/lce_skin_registry.o
 clang++ "${flags[@]}" "${cxx[@]}" -Wno-missing-field-initializers -I"$transport" -c /home/codey/minecraft-lce-work/ps4-metadata-snapshot/crashlog-build/dyn_skins.cpp -o /home/codey/minecraft-lce-work/ps4-metadata-snapshot/crashlog-build/build/lce_dyn_skins.o
