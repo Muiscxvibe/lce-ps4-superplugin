@@ -1,19 +1,19 @@
 {
   "items": [
     {
-      "description": "Official build r8-anticheat-20261117225049",
+      "description": "Official build r8-anticheat-20261119111013",
       "files": [
         {
           "asset": "mc195_lce_session.prx",
           "path": "mc195_lce_session.prx",
-          "sha256": "876b7a72d9860cbc5c46c09c3189762ac1e1340b92d2eda844d2040330583697",
-          "size": 5670960,
-          "url": "https://github.com/Muiscxvibe/lce-ps4-superplugin/releases/download/session-plugin-v20261117225049/mc195_lce_session.prx"
+          "sha256": "ac3f32db5c6942c27ea197a0111ee2cfbdbe9c724cb46bcf61dcac3b9308248b",
+          "size": 7141824,
+          "url": "https://github.com/Muiscxvibe/lce-ps4-superplugin/releases/download/session-plugin-v20261119111013/mc195_lce_session.prx"
         }
       ],
       "id": "session-plugin",
       "name": "LCE Server plugin",
-      "version": "20261117225049"
+      "version": "20261119111013"
     }
   ],
   "repo": "plugin",

@@ -140,6 +140,8 @@ def cmd_init(a):
 def cmd_add(a):
     if not ID_RE.match(a.id) or not VERSION_RE.match(a.version):
         sys.exit('id must be lowercase letters/digits/dashes; version like 1 or 1.2.3')
+    if len(a.desc or '') > 127 or len(a.name) > 63 or not all(32 <= ord(c) < 127 for c in (a.desc or '') + a.name):
+        sys.exit('name must be <= 63 and description <= 127 printable ASCII characters (plugin catalog limits)')
     d = repo_dir(a.repo)
     index = load_index(d, a.repo)
     tag = f'{a.id}-v{a.version}'
