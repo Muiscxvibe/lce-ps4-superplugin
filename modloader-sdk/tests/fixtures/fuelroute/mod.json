@@ -1,0 +1,10 @@
+{
+  "format": 1,
+  "id": "fuelroute",
+  "name": "Furnace Fuel Route Test",
+  "version": "1.0.0",
+  "author": "tests",
+  "fuels": [
+    {"item": "minecraft:paper", "burn_ticks": 600}
+  ]
+}

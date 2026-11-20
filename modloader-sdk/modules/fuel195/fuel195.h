@@ -26,6 +26,14 @@
  * retail setLit when igniting an unlit furnace, then calls the stock serverTick.
  * Having a positive remaining timer after the stock decrement skips the stock
  * relight branch, so the stack is only consumed once.
+ *
+ * The fuel slot accepts registered fuel through its mayPlace virtual. Quick
+ * Move handles registered inventory and hotbar stacks through FurnaceMenu's
+ * +0x68 virtual, behind the same startup gate. It checks the active cooker
+ * recipe and uses the native container transfer and slot callbacks. Other
+ * slots and stock items use the original Quick Move method.
+ * Hopper placement also reads the primary vtable through the existing sided
+ * placement thunk, so both of its placement checks honor registered fuel.
  */
 #pragma once
 #include <stddef.h>
@@ -57,6 +65,15 @@ extern "C" {
 #define FUEL195_RVA_FUEL_SLOT_VT    0x125b658u /* FurnaceFuelSlot vtable */
 #define FUEL195_RVA_FUEL_SLOT_RTTI  0x12627d0u /* FurnaceFuelSlot typeinfo */
 #define FUEL195_RVA_FUEL_MAY_PLACE  0x324200u /* FurnaceFuelSlot::mayPlace */
+#define FUEL195_RVA_FURNACE_MENU_VT 0x125b708u
+#define FUEL195_RVA_FURNACE_MENU_RTTI 0x12627f0u
+#define FUEL195_RVA_QUICK_MOVE      0x325100u /* FurnaceMenu::quickMoveStack */
+#define FUEL195_VSLOT_QUICK_MOVE    0x68u
+#define FUEL195_RVA_CONTAINER_VT    0x125b4e0u /* FurnaceBlockEntity Container address point */
+#define FUEL195_VSLOT_CONTAINER_CAN_PLACE 0x88u
+#define FUEL195_VSLOT_CONTAINER_SIDED     0xb8u
+#define FUEL195_RVA_CONTAINER_CAN_PLACE  0x323650u /* direct stock thunk */
+#define FUEL195_RVA_CONTAINER_SIDED      0x3237d0u /* thunk reads primary +0x188 */
 
 /* ---- Object / ItemInstance layout ---- */
 #define FUEL195_OFF_LITTIME      0xb8u
@@ -117,6 +134,8 @@ typedef struct fuel195_runtime {
     const struct fuel195_ops *slot_ops;
     int (*origMayPlace)(void *slot, void *stackSp);
     uintptr_t may_place_slot;
+    uintptr_t quick_move_slot;
+    uintptr_t hopper_slot;
     int installed;
     const char *failed_step;  /* static diagnostic for the first failed attachment */
 } fuel195_runtime;

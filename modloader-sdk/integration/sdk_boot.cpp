@@ -303,9 +303,11 @@ extern "C" int lce_sdk_after_items(void) {
     return lce195c_phase_after_items(&g_composite);
 }
 
-extern "C" int lce_sdk_crafting_wanted(void) {
+extern "C" int lce_sdk_stock_items_wanted(void) {
+    // A committed mod can use Lua services or late registries with only
+    // stock items. Never use the stock route for an absent ordinary provider.
     return __atomic_load_n(&g_boot_state, __ATOMIC_ACQUIRE) == 2u &&
-        g_composite.plan && g_composite.plan->recipe_count != 0;
+        g_composite.plan && g_composite.plan->item_count == 0;
 }
 
 extern "C" int lce_sdk_creative_blocks_wanted(void) {

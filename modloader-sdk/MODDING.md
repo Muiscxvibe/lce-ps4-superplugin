@@ -396,7 +396,7 @@ Vanilla bases: `water`, `mundane`, `thick`, `awkward`, and the standard potions.
 ```json
 {"item": "minecraft:stick", "burn_ticks": 150}
 ```
-`burn_ticks` is 1..72000. The default retail build and `retail195` profile refuse custom fuel. For an experimental candidate, build with `LCE_EXPERIMENTAL_FUEL=1` and check using `--profile retail195-experimental-fuel`; `fuel_ticks` on an item and `fuels` declarations share a 64-item limit. Declaring both for the same item is a collision and is rejected before publication. On PS4, direct placement in an ordinary furnace was verified for inline 1600-tick fuel and explicit 800-tick fuel, including save and reload. Hopper and Quick Move behavior remain unverified; stock insertion rules may apply. See INTEGRATION.md for details.
+`burn_ticks` is 1..72000. The default retail build and `retail195` profile refuse custom fuel. For an experimental candidate, build with `LCE_EXPERIMENTAL_FUEL=1` and check using `--profile retail195-experimental-fuel`; `fuel_ticks` on an item and `fuels` declarations share a 64-item limit. Declaring both for the same item is a collision and is rejected before publication. On PS4, direct placement in an ordinary furnace was verified for inline 1600-tick fuel and explicit 800-tick fuel, including save and reload. Quick Move sends registered fuel to the fuel slot, with smelting recipes taking priority. Hoppers can insert registered fuel through the stock slot and face checks. All three routes passed on retail 1.95 hardware using a package that registers stock Paper as fuel without adding items or recipes. See INTEGRATION.md for details.
 
 **`entities`:**
 ```json

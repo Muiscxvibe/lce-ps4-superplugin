@@ -104,11 +104,37 @@ static int slot_cas(void *u, uintptr_t addr, uint64_t expected, uint64_t repl) {
     t->slot = repl; return 1;
 }
 static int fake_may_place(void *, void *) { return 7; }
-struct FakeInstall { FakeTable table; FakeRegistry registry; FakeBlockTable block, menu; int fail_menu; };
+struct FakeInstall {
+    FakeTable table;
+    FakeRegistry registry;
+    FakeBlockTable block, menu, quick_move, hopper;
+    uint64_t sided_placement;
+    int fail_quick_move, fail_hopper;
+};
+static int quick_move_read(const FakeBlockTable &t, uintptr_t addr, void *out, size_t n) {
+    uintptr_t vt = t.base + FUEL195_RVA_FURNACE_MENU_VT;
+    if (n != 8) return 0;
+    const uint64_t *value = addr == vt - 16 ? &t.offset : addr == vt - 8 ? &t.typeinfo :
+        addr == vt + FUEL195_VSLOT_QUICK_MOVE ? &t.slot : nullptr;
+    if (!value) return 0;
+    memcpy(out, value, n);
+    return 1;
+}
+static int hopper_read(const FakeInstall &f, uintptr_t addr, void *out, size_t n) {
+    uintptr_t vt = f.hopper.base + FUEL195_RVA_CONTAINER_VT;
+    if (n != 8) return 0;
+    const uint64_t *value = addr == vt - 16 ? &f.hopper.offset : addr == vt - 8 ? &f.hopper.typeinfo :
+        addr == vt + FUEL195_VSLOT_CONTAINER_CAN_PLACE ? &f.hopper.slot :
+        addr == vt + FUEL195_VSLOT_CONTAINER_SIDED ? &f.sided_placement : nullptr;
+    if (!value) return 0;
+    memcpy(out, value, n);
+    return 1;
+}
 static int install_read(void *u, uintptr_t a, void *out, size_t n) {
     FakeInstall *f = (FakeInstall *)u;
     return fake_read(&f->table, a, out, n) || registry_read(&f->registry, a, out, n) ||
-           block_read(&f->block, a, out, n) || slot_read(&f->menu, a, out, n);
+           block_read(&f->block, a, out, n) || slot_read(&f->menu, a, out, n) ||
+           quick_move_read(f->quick_move, a, out, n) || hopper_read(*f, a, out, n);
 }
 static int install_write(void *u, uintptr_t a, const void *in, size_t n) {
     return fake_write(&((FakeInstall *)u)->table, a, in, n);
@@ -117,7 +143,17 @@ static uintptr_t install_alloc(void *u, size_t n) { return fake_alloc(&((FakeIns
 static int install_cas(void *u, uintptr_t a, uint64_t expected, uint64_t repl) {
     FakeInstall *f = (FakeInstall *)u;
     if (a == f->block.base + FUEL195_RVA_BLOCK_ENTITY_VT + 0x10) return block_cas(&f->block, a, expected, repl);
-    if (a == f->menu.base + FUEL195_RVA_FUEL_SLOT_VT + 0x30) return f->fail_menu ? 0 : slot_cas(&f->menu, a, expected, repl);
+    if (a == f->menu.base + FUEL195_RVA_FUEL_SLOT_VT + 0x30) return slot_cas(&f->menu, a, expected, repl);
+    if (a == f->quick_move.base + FUEL195_RVA_FURNACE_MENU_VT + FUEL195_VSLOT_QUICK_MOVE) {
+        if (f->fail_quick_move == 1 || f->quick_move.slot != expected) return 0;
+        f->quick_move.slot = repl;
+        return f->fail_quick_move == -1 ? -1 : 1;
+    }
+    if (a == f->hopper.base + FUEL195_RVA_CONTAINER_VT + FUEL195_VSLOT_CONTAINER_CAN_PLACE) {
+        if (f->fail_hopper || f->hopper.slot != expected) return 0;
+        f->hopper.slot = repl;
+        return 1;
+    }
     if (a == (uintptr_t)f->registry.first + 0x38 || a == (uintptr_t)f->registry.second + 0x38)
         return registry_cas(nullptr, a, expected, repl);
     return 0;
@@ -317,11 +353,14 @@ int main() {
     CHECK_EQ(fuel195_collect_plan(&plan, item_by_id, &collected, err, sizeof err), LCE_E_INVALID);
     CHECK_EQ(memcmp(&collected, &previous, sizeof collected), 0);
 
-    // A refusal at the last attachment restores the earlier two; a complete
-    // activation leaves all three pointing at the wrappers and publishes data.
+    // A refusal while attaching any hook restores the earlier hooks.
     FakeInstall all{}; all.table.base = all.registry.base = reg.base;
     all.block = FakeBlockTable{reg.base, (uint64_t)-(int64_t)0x1e8, reg.base + FUEL195_RVA_BLOCK_RTTI, reg.base + FUEL195_RVA_NEW_FURNACE};
     all.menu = FakeBlockTable{reg.base, 0, reg.base + FUEL195_RVA_FUEL_SLOT_RTTI, reg.base + FUEL195_RVA_FUEL_MAY_PLACE};
+    all.quick_move = FakeBlockTable{reg.base, 0, reg.base + FUEL195_RVA_FURNACE_MENU_RTTI, reg.base + FUEL195_RVA_QUICK_MOVE};
+    all.hopper = FakeBlockTable{reg.base, (uint64_t)-(int64_t)FUEL195_FBE_CONTAINER_OFFSET,
+        reg.base + FUEL195_RVA_FBE_RTTI, reg.base + FUEL195_RVA_CONTAINER_CAN_PLACE};
+    all.sided_placement = reg.base + FUEL195_RVA_CONTAINER_SIDED;
     put(all.table.source, 0, uint64_t(0x50));
     put(all.table.source, 8, uint64_t(0x50));
     put(all.table.source, 24, uint64_t(reg.base + FUEL195_RVA_FBE_RTTI));
@@ -331,19 +370,43 @@ int main() {
     put(all.registry.first, 0, uint64_t((uintptr_t)all.registry.sentinel));
     put(all.registry.first, 0x38, uint64_t(reg.base + FUEL195_RVA_FBE_FACTORY));
     fuel195_ops allops{}; allops.ctx = &all; allops.read = install_read; allops.write = install_write; allops.cas8 = install_cas; allops.alloc = install_alloc;
-    *global = fuel195_runtime{}; all.fail_menu = 1;
+    *global = fuel195_runtime{}; all.fail_quick_move = 1;
     CHECK_EQ(fuel195_activate(global, &allops, reg.base, &previous), 0);
     CHECK_EQ(get<uint64_t>(all.registry.first, 0x38), reg.base + FUEL195_RVA_FBE_FACTORY);
     CHECK_EQ(all.block.slot, reg.base + FUEL195_RVA_NEW_FURNACE);
+    CHECK_EQ(all.menu.slot, reg.base + FUEL195_RVA_FUEL_MAY_PLACE);
+    CHECK_EQ(all.quick_move.slot, reg.base + FUEL195_RVA_QUICK_MOVE);
     CHECK_EQ(global->table.count, 0);
     CHECK_EQ(global->installed, 0);
-    all.fail_menu = 0;
+    all.fail_quick_move = 0;
+    all.fail_hopper = 1;
+    CHECK_EQ(fuel195_activate(global, &allops, reg.base, &previous), 0);
+    CHECK_EQ(all.quick_move.slot, reg.base + FUEL195_RVA_QUICK_MOVE);
+    CHECK_EQ(all.hopper.slot, reg.base + FUEL195_RVA_CONTAINER_CAN_PLACE);
+    CHECK_EQ(global->table.count, 0);
+    all.fail_hopper = 0;
     CHECK_EQ(fuel195_activate(global, &allops, reg.base, &previous), 1);
     CHECK_EQ(get<uint64_t>(all.registry.first, 0x38), (uintptr_t)&fuel195_load_factory_wrapper);
     CHECK_EQ(all.block.slot, (uintptr_t)&fuel195_new_factory_wrapper);
     CHECK_EQ(all.menu.slot, (uintptr_t)&fuel195_may_place_wrapper);
+    CHECK(all.quick_move.slot != reg.base + FUEL195_RVA_QUICK_MOVE);
+    CHECK_EQ(global->quick_move_slot, reg.base + FUEL195_RVA_FURNACE_MENU_VT + FUEL195_VSLOT_QUICK_MOVE);
+    CHECK_EQ(global->hopper_slot, reg.base + FUEL195_RVA_CONTAINER_VT + FUEL195_VSLOT_CONTAINER_CAN_PLACE);
+    CHECK_EQ(all.hopper.slot, reg.base + FUEL195_RVA_CONTAINER_SIDED);
     CHECK_EQ(global->table.count, 2);
     CHECK_EQ(global->installed, 1);
+    const uintptr_t quick_move_wrapper = all.quick_move.slot;
+    *global = fuel195_runtime{};
+    put(all.registry.first, 0x38, uint64_t(reg.base + FUEL195_RVA_FBE_FACTORY));
+    all.block.slot = reg.base + FUEL195_RVA_NEW_FURNACE;
+    all.menu.slot = reg.base + FUEL195_RVA_FUEL_MAY_PLACE;
+    all.quick_move.slot = reg.base + FUEL195_RVA_QUICK_MOVE;
+    all.hopper.slot = reg.base + FUEL195_RVA_CONTAINER_CAN_PLACE;
+    all.fail_quick_move = -1;
+    CHECK_EQ(fuel195_activate(global, &allops, reg.base, &previous), -1);
+    CHECK_EQ(all.quick_move.slot, quick_move_wrapper);
+    CHECK_EQ(global->table.count, 2);
+    CHECK_EQ(global->installed, -1);
     *global = fuel195_runtime{};
     TEST_MAIN_END("test_fuel195");
 }

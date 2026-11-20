@@ -71,7 +71,7 @@
 +static int sdk_only,sdk_creative_only,sdk_stock_items;
  extern "C" int lce_sdk_creative_blocks_wanted(void) __attribute__((weak));
  extern "C" int lce_sdk_creative_potions_wanted(void) __attribute__((weak));
-+extern "C" int lce_sdk_crafting_wanted(void) __attribute__((weak));
++extern "C" int lce_sdk_stock_items_wanted(void) __attribute__((weak));
  extern "C" void steel195_tools_runtime_set_sdk_only(int on){if(!__atomic_load_n(&preparation,__ATOMIC_ACQUIRE))sdk_only=on?1:0;}
  extern "C" int steel195_tools_runtime_sdk_only(void){return sdk_only;}
  extern "C" int steel195_tools_runtime_sdk_creative_only(void){
@@ -88,7 +88,7 @@
     (lce_sdk_creative_potions_wanted&&lce_sdk_creative_potions_wanted()));
 -  __atomic_store_n(&preparation,sdk_creative_only?3u:6u,__ATOMIC_RELEASE);
 -  return sdk_creative_only;
-+  sdk_stock_items=sdk_creative_only||(sdk_only&&lce_sdk_crafting_wanted&&lce_sdk_crafting_wanted());
++  sdk_stock_items=sdk_creative_only||(sdk_only&&lce_sdk_stock_items_wanted&&lce_sdk_stock_items_wanted());
 +  __atomic_store_n(&preparation,sdk_stock_items?3u:6u,__ATOMIC_RELEASE);
 +  return sdk_stock_items;
   }

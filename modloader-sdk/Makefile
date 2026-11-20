@@ -12,6 +12,8 @@ ITEMS195 = modules/items195/items.cpp modules/items195/recipes.cpp modules/items
 PKGS = build/pkg/newretail/mod.lcm build/pkg/allcontent/mod.lcm build/pkg/retailall/mod.lcm build/pkg/rubyretail/mod.lcm build/pkg/rubymod/mod.lcm build/pkg/gem/mod.lcm build/pkg/rubytools/mod.lcm build/pkg/orphan/mod.lcm build/pkg/badver/mod.lcm build/pkg/blockstates/mod.lcm build/pkg/throwables/mod.lcm build/pkg/boats/mod.lcm build/pkg/shapes/mod.lcm build/pkg/fueltest/mod.lcm build/pkg/luafuel/mod.lcm
 PKGS += build/pkg/luamobs/mod.lcm build/pkg/luatexture/mod.lcm build/pkg/luaworldgen/mod.lcm build/pkg/potiononly/mod.lcm
 
+PKGS += build/pkg/fuelroute/mod.lcm
+
 all: test
 
 loader/vanilla_195.inc: tools/data/vanilla_195.json tools/gen_vanilla.py
@@ -23,6 +25,8 @@ build/pkg/rubymod/mod.lcm: tools/lce_port.py tools/lce_modpack.py tools/port_com
 build/pkg/gem/mod.lcm: tools/lce_port.py tools/lce_modpack.py tools/port_compat.py $(shell find examples/bedrock-sapphire -type f)
 	python3 tools/lce_port.py bedrock examples/bedrock-sapphire/BP examples/bedrock-sapphire/RP build/port/gem
 	python3 tools/lce_modpack.py build build/port/gem build/pkg
+build/pkg/fuelroute/mod.lcm: tests/fixtures/fuelroute/mod.json tools/lce_modpack.py tools/lce_ext_schema.py
+	python3 tools/lce_modpack.py build --profile retail195-experimental-fuel tests/fixtures/fuelroute build/pkg
 build/pkg/%/mod.lcm: tests/fixtures/%/mod.json $(wildcard tests/fixtures/*/scripts/*.lua) $(wildcard tests/fixtures/*/textures/*.png) tools/lce_modpack.py tools/lce_ext_schema.py
 	python3 tools/lce_modpack.py build tests/fixtures/$* build/pkg
 
@@ -95,6 +99,8 @@ test: $(PKGS) $(B)/test_sha256 $(B)/test_package $(B)/test_ledger $(B)/test_load
 	$(B)/test_mob_spawn_route195
 	@if [ -f /home/codey/minecraft-ps4-research/private-direct-legacy-capture/legacy-195-analysis.elf ]; then python3 -I modules/fuel195/tests/test_image_pins.py; else echo "retail image absent: skipping fuel195 image pins"; fi
 	@if [ -f /home/codey/minecraft-ps4-research/private-direct-legacy-capture/legacy-195-analysis.elf ] && [ -x /home/codey/minecraft-ps4-research/private-direct-legacy-capture/venv-analysis/bin/python ]; then /home/codey/minecraft-ps4-research/private-direct-legacy-capture/venv-analysis/bin/python -I modules/fuel195/tests/test_retail_tick.py; else echo "retail image or analysis venv absent: skipping fuel195 tick"; fi
+	@if [ -f /home/codey/minecraft-ps4-research/private-direct-legacy-capture/legacy-195-analysis.elf ] && [ -x /home/codey/minecraft-ps4-research/private-direct-legacy-capture/venv-analysis/bin/python ]; then /home/codey/minecraft-ps4-research/private-direct-legacy-capture/venv-analysis/bin/python -IB modules/fuel195/tests/test_retail_quick_move.py; else echo "retail image or analysis venv absent: skipping fuel195 Quick Move"; fi
+	@if [ -f /home/codey/minecraft-ps4-research/private-direct-legacy-capture/legacy-195-analysis.elf ] && [ -x /home/codey/minecraft-ps4-research/private-direct-legacy-capture/venv-analysis/bin/python ]; then /home/codey/minecraft-ps4-research/private-direct-legacy-capture/venv-analysis/bin/python -IB modules/fuel195/tests/test_retail_hopper.py; else echo "retail image or analysis venv absent: skipping fuel195 hopper"; fi
 	$(B)/test_config build/pkg/allcontent/config
 	$(B)/test_ext build/pkg
 	$(B)/test_oneshot

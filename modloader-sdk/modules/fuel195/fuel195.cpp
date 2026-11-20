@@ -46,12 +46,18 @@ extern "C" int fuel195_add(fuel195_runtime *rt, uintptr_t item, uint32_t ticks, 
     return 1;
 }
 
-extern "C" const fuel195_entry *fuel195_lookup(const fuel195_runtime *rt, uintptr_t item) {
-    if (!rt || !item) return nullptr;
-    uint32_t n = __atomic_load_n(&rt->table.count, __ATOMIC_ACQUIRE);
-    for (uint32_t i = 0; i < n; ++i)
-        if (rt->table.e[i].item == item) return &rt->table.e[i];
+namespace {
+const fuel195_entry *lookup_fuel(const fuel195_table &table, uintptr_t item) {
+    if (!item) return nullptr;
+    uint32_t count = __atomic_load_n(&table.count, __ATOMIC_ACQUIRE);
+    for (uint32_t i = 0; i < count; ++i)
+        if (table.e[i].item == item) return &table.e[i];
     return nullptr;
+}
+}  // namespace
+
+extern "C" const fuel195_entry *fuel195_lookup(const fuel195_runtime *rt, uintptr_t item) {
+    return rt ? lookup_fuel(rt->table, item) : nullptr;
 }
 
 extern "C" size_t fuel195_build_vtable(uint8_t *dst, size_t cap, const uint8_t *src, size_t len,
@@ -275,11 +281,153 @@ extern "C" int fuel195_install_fuel_slot(fuel195_runtime *rt, const fuel195_ops 
     return rc;
 }
 
+namespace {
+// The retail C++ ABI passes shared_ptr by address and supplies the return
+// storage before `this`. Use native copy/assignment to keep ownership with the
+// game's control block implementation across all inventory callbacks.
+struct SharedPair {
+    void *object;
+    void *control;
+};
+using AssignShared = void (*)(SharedPair *, void *, void *);
+
+struct StackReference {
+    AssignShared assign;
+    SharedPair value{};
+
+    ~StackReference() { reset(); }
+    void reset() { if (value.control) assign(&value, nullptr, nullptr); }
+    void copy(const SharedPair &other) { assign(&value, other.object, other.control); }
+};
+
+template <class Fn> Fn menu_virtual(void *object, uintptr_t slot) {
+    return rdf<Fn>(rdf<void *>(object, 0), slot);
+}
+
+constexpr uintptr_t kAssignStack = 0x66b00;
+constexpr uintptr_t kAssignPlayer = 0x680b0;
+constexpr uintptr_t kEmptyStack = 0x1416d98;
+constexpr uintptr_t kCopyStack = 0x3642b0;
+constexpr uintptr_t kGetCount = 0x3626b0;
+constexpr uintptr_t kRecipes = 0x1416a80;
+constexpr uintptr_t kSmeltResult = 0x3226f0;
+constexpr uintptr_t kMoveStackTo = 0xe030;
+}  // namespace
+
+static SharedPair *quick_move(SharedPair *out, void *menu,
+        const SharedPair *player, int32_t index, const fuel195_table *table, uintptr_t base) {
+    const auto stock = (SharedPair *(*)(SharedPair *, void *, const SharedPair *, int32_t))
+        (base + FUEL195_RVA_QUICK_MOVE);
+    const auto assign = (AssignShared)(base + kAssignStack);
+    if (index < 3 || !table->count)
+        return stock(out, menu, player, index);
+    const uintptr_t slots = rdf<uintptr_t>(menu, 0x30);
+    const uintptr_t slots_end = rdf<uintptr_t>(menu, 0x38);
+    if (!slots || slots_end < slots || (uintptr_t)index >= (slots_end - slots) / sizeof(void *))
+        return stock(out, menu, player, index);
+    void *slot = rdf<void *>((void *)slots, (uintptr_t)index * sizeof(void *));
+    if (!slot || !menu_virtual<bool (*)(void *)>(slot, 0x40)(slot))
+        return stock(out, menu, player, index);
+
+    StackReference source{assign};
+    menu_virtual<SharedPair *(*)(SharedPair *, void *)>(slot, 0x38)(&source.value, slot);
+    const auto empty = (bool (*)(void *))(base + FUEL195_RVA_ISEMPTY);
+    const auto item = (void *(*)(void *))(base + FUEL195_RVA_GETITEM);
+    if (!source.value.object || empty(source.value.object) ||
+        !lookup_fuel(*table, (uintptr_t)item(source.value.object))) {
+        source.reset();
+        return stock(out, menu, player, index);
+    }
+
+    // Native Quick Move checks the active cooker's recipe mask before fuel.
+    // A matching recipe takes the complete unmodified stock path.
+    void *furnace = rdf<void *>(menu, 0x178);
+    int32_t cooker = menu_virtual<int32_t (*)(void *, int32_t)>(furnace, 0x90)(furnace, 5);
+    void *recipes = rdf<void *>((void *)(base + kRecipes), 0);
+    auto smelt_result = (void *(*)(void *, const SharedPair *, int32_t))(base + kSmeltResult);
+    wrf<int32_t>(menu, 0x1a0, cooker);
+    if (!empty(smelt_result(recipes, &source.value, cooker))) {
+        source.reset();
+        return stock(out, menu, player, index);
+    }
+
+    StackReference original{assign};
+    ((SharedPair *(*)(SharedPair *, void *))(base + kCopyStack))(&original.value, source.value.object);
+    const auto move = (bool (*)(void *, const SharedPair *, int32_t, int32_t, bool, bool, bool))
+        (base + kMoveStackTo);
+    bool moved;
+    {
+        StackReference transfer{assign};
+        transfer.copy(source.value);
+        moved = move(menu, &transfer.value, 1, 2, false, true, true);
+    }
+    const auto count = (int32_t (*)(void *))(base + kGetCount);
+    if (moved) {
+        if (count(source.value.object) == 0) {
+            StackReference clear{assign};
+            clear.copy(*(const SharedPair *)(base + kEmptyStack));
+            menu_virtual<void (*)(void *, const SharedPair *)>(slot, 0x48)(slot, &clear.value);
+        } else {
+            menu_virtual<void (*)(void *)>(slot, 0x50)(slot);
+        }
+        if (count(source.value.object) != count(original.value.object)) {
+            StackReference taker{(AssignShared)(base + kAssignPlayer)}, taken{assign}, take_result{assign};
+            taker.copy(*player);
+            taken.copy(source.value);
+            menu_virtual<SharedPair *(*)(SharedPair *, void *, const SharedPair *, const SharedPair *)>(slot, 0x28)
+                (&take_result.value, slot, &taker.value, &taken.value);
+            *out = original.value;
+            original.value = {};
+            return out;
+        }
+    }
+    *out = {};
+    const auto *empty_stack = (const SharedPair *)(base + kEmptyStack);
+    assign(out, empty_stack->object, empty_stack->control);
+    return out;
+}
+
+extern "C" SharedPair *fuel195_quick_move_wrapper(SharedPair *out, void *menu,
+        const SharedPair *player, int32_t index) {
+    return quick_move(out, menu, player, index, &g_rt.table, g_rt.nat.base);
+}
+
+static int install_quick_move(fuel195_runtime *rt, const fuel195_ops *o) {
+    const uintptr_t vt = rt->nat.base + FUEL195_RVA_FURNACE_MENU_VT;
+    uint64_t offset = 0, typeinfo = 0, method = 0;
+    if (o->read(o->ctx, vt - 16, &offset, 8) != 1 || offset ||
+        o->read(o->ctx, vt - 8, &typeinfo, 8) != 1 || typeinfo != rt->nat.base + FUEL195_RVA_FURNACE_MENU_RTTI ||
+        o->read(o->ctx, vt + FUEL195_VSLOT_QUICK_MOVE, &method, 8) != 1 ||
+        method != rt->nat.base + FUEL195_RVA_QUICK_MOVE) return 0;
+    const uintptr_t address = vt + FUEL195_VSLOT_QUICK_MOVE;
+    int rc = o->cas8(o->ctx, address, method, (uintptr_t)&fuel195_quick_move_wrapper);
+    if (rc == 1) rt->quick_move_slot = address;
+    return rc;
+}
+
+static int install_hopper_placement(fuel195_runtime *rt, const fuel195_ops *o) {
+    const uintptr_t base = rt->nat.base;
+    const uintptr_t vt = base + FUEL195_RVA_CONTAINER_VT;
+    const uintptr_t slot = vt + FUEL195_VSLOT_CONTAINER_CAN_PLACE;
+    uint64_t offset = 0, typeinfo = 0, direct = 0, sided = 0;
+    if (o->read(o->ctx, vt - 16, &offset, 8) != 1 || offset != (uint64_t)-(int64_t)FUEL195_FBE_CONTAINER_OFFSET ||
+        o->read(o->ctx, vt - 8, &typeinfo, 8) != 1 || typeinfo != base + FUEL195_RVA_FBE_RTTI ||
+        o->read(o->ctx, slot, &direct, 8) != 1 || direct != base + FUEL195_RVA_CONTAINER_CAN_PLACE ||
+        o->read(o->ctx, vt + FUEL195_VSLOT_CONTAINER_SIDED, &sided, 8) != 1 ||
+        sided != base + FUEL195_RVA_CONTAINER_SIDED) return 0;
+    // Hopper first calls Container::canPlaceItem, then the sided method.
+    // The sided thunk ignores the face argument and calls primary canPlaceItem
+    // virtually. Use that same retail dispatcher for the first check as well.
+    const int rc = o->cas8(o->ctx, slot, direct, sided);
+    if (rc == 1) rt->hopper_slot = slot;
+    return rc;
+}
+
 extern "C" int fuel195_activate(fuel195_runtime *rt, const fuel195_ops *o, uintptr_t base,
                                  const fuel195_table *table) {
     if (rt != &g_rt || !o || !o->cas8 || !base || base > UINTPTR_MAX - FUEL195_RVA_BE_REGISTRY ||
         !table || !table->count || table->count > FUEL195_MAX || rt->installed ||
-        rt->factory_slot || rt->new_slot || rt->may_place_slot ||
+        rt->factory_slot || rt->new_slot || rt->may_place_slot || rt->quick_move_slot || rt->hopper_slot ||
         (rt->private_vtable && rt->nat.base != base)) return 0;
     for (uint32_t i = 0; i < table->count; ++i) {
         if (!table->e[i].item || !table->e[i].ticks || table->e[i].ticks > FUEL195_MAX_TICKS) return 0;
@@ -301,11 +449,23 @@ extern "C" int fuel195_activate(fuel195_runtime *rt, const fuel195_ops *o, uintp
         rt->failed_step = "furnace fuel slot";
         rc = fuel195_install_fuel_slot(rt, o);
     }
+    if (rc == 1) {
+        rt->failed_step = "furnace Quick Move";
+        rc = install_quick_move(rt, o);
+    }
+    if (rc == 1) {
+        rt->failed_step = "furnace hopper placement";
+        rc = install_hopper_placement(rt, o);
+    }
     if (rc == 1) { rt->failed_step = nullptr; rt->installed = 1; return 1; }
     if (rc < 0) { rt->installed = -1; return -1; }
 
     // Roll back in reverse order. If another writer changed a slot, or page
     // protection could not be restored, keep all wrapper dependencies alive.
+    if (rt->quick_move_slot && o->cas8(o->ctx, rt->quick_move_slot,
+            (uintptr_t)&fuel195_quick_move_wrapper, base + FUEL195_RVA_QUICK_MOVE) != 1) {
+        rt->installed = -1; return -1;
+    }
     if (rt->may_place_slot && o->cas8(o->ctx, rt->may_place_slot,
             (uintptr_t)&fuel195_may_place_wrapper, (uintptr_t)rt->origMayPlace) != 1) {
         rt->installed = -1; return -1;
@@ -318,7 +478,7 @@ extern "C" int fuel195_activate(fuel195_runtime *rt, const fuel195_ops *o, uintp
             (uintptr_t)&fuel195_load_factory_wrapper, (uintptr_t)rt->origFactory) != 1) {
         rt->installed = -1; return -1;
     }
-    rt->factory_slot = rt->new_slot = rt->may_place_slot = 0;
+    rt->factory_slot = rt->new_slot = rt->may_place_slot = rt->quick_move_slot = 0;
     rt->origFactory = nullptr; rt->origNew = nullptr; rt->origMayPlace = nullptr;
     rt->factory_ops = rt->new_ops = rt->slot_ops = nullptr;
     memset(&rt->table, 0, sizeof rt->table);

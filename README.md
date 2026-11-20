@@ -20,8 +20,10 @@ for CUSA00265 in `/data/GoldHEN/plugins.ini`. Keep one active entry for the
 game. Restart Minecraft and test in a disposable local world. To roll back,
 close the game and restore the saved PRX.
 
-- Direct furnace placement supports declarative and Lua fuel. Quick Move sends
-  custom fuel to inventory. Hopper insertion remains experimental.
+- Experimental custom furnace fuel works with direct placement, Quick Move, and
+  side hoppers. On retail 1.95 hardware, one custom fuel item burned for 600 ticks
+  in each route, producing three glass from four sand. The test package registered
+  fuel for ordinary Paper and added no new items or recipes.
 - Enter the local debug menu with **L3 + R3**. In the NBT tab, open **Me**.
   Square applies the staged changes. Select **Undo last apply (local)** in the
   R1 action menu to reverse the last apply within the same editing session.

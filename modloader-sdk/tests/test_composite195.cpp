@@ -987,8 +987,7 @@ static void scenario_fuel_binding() {
     CHECK_EQ(g_comp.state, 0);
 }
 
-// Exercise a staged fuel mod through item publication and the late startup gate.
-static void scenario_fuel_publish() {
+static void prepare_fuel_image() {
     image(); override_all();
     uintptr_t vt = B + FUEL195_RVA_FBE_VTABLE;
     F<uint64_t>(vt - 32) = 0x50; F<uint64_t>(vt - 24) = 0x50;
@@ -1002,11 +1001,27 @@ static void scenario_fuel_publish() {
     uintptr_t slot = B + FUEL195_RVA_FUEL_SLOT_VT;
     F<uint64_t>(slot - 16) = 0; F<uint64_t>(slot - 8) = B + FUEL195_RVA_FUEL_SLOT_RTTI;
     F<uint64_t>(slot + 0x30) = B + FUEL195_RVA_FUEL_MAY_PLACE;
+    uintptr_t menu = B + FUEL195_RVA_FURNACE_MENU_VT;
+    F<uint64_t>(menu - 16) = 0;
+    F<uint64_t>(menu - 8) = B + FUEL195_RVA_FURNACE_MENU_RTTI;
+    F<uint64_t>(menu + FUEL195_VSLOT_QUICK_MOVE) = B + FUEL195_RVA_QUICK_MOVE;
+    uintptr_t container = B + FUEL195_RVA_CONTAINER_VT;
+    F<uint64_t>(container - 16) = (uint64_t)-(int64_t)FUEL195_FBE_CONTAINER_OFFSET;
+    F<uint64_t>(container - 8) = B + FUEL195_RVA_FBE_RTTI;
+    F<uint64_t>(container + FUEL195_VSLOT_CONTAINER_CAN_PLACE) = B + FUEL195_RVA_CONTAINER_CAN_PLACE;
+    F<uint64_t>(container + FUEL195_VSLOT_CONTAINER_SIDED) = B + FUEL195_RVA_CONTAINER_SIDED;
     uintptr_t head = (uintptr_t)fake_alloc(0x40), node = (uintptr_t)fake_alloc(0x40);
     F<uint64_t>(B + FUEL195_RVA_BE_REGISTRY + 8) = head;
     F<uint64_t>(B + FUEL195_RVA_BE_REGISTRY + 16) = 1;
     F<uint64_t>(head) = node; F<uint64_t>(node) = head;
     F<uint64_t>(node + 0x38) = B + FUEL195_RVA_FBE_FACTORY;
+}
+
+// Exercise a staged fuel mod through item publication and the late startup gate.
+static void scenario_fuel_publish() {
+    prepare_fuel_image();
+    const uintptr_t menu = B + FUEL195_RVA_FURNACE_MENU_VT;
+    const uintptr_t container = B + FUEL195_RVA_CONTAINER_VT;
     install("fueltest"); install("luafuel"); boot(true, true, true);
     CHECK_EQ(lce_loader_commit(g_l), LCE_OK);
     const lce_mod_report *m = mod("fueltest"); CHECK(m && m->state == LCE_MOD_LIVE);
@@ -1017,6 +1032,10 @@ static void scenario_fuel_publish() {
     CHECK_EQ(lce195c_phase_after_items(&g_comp), 1);
     CHECK_EQ(lce195c_phase_late(&g_comp), 1);
     CHECK_EQ(lce195c_phase_state(&g_comp, LCE195C_PH_FUEL), LCE195C_DONE);
+    CHECK_EQ(fuel195_rt()->quick_move_slot, menu + FUEL195_VSLOT_QUICK_MOVE);
+    CHECK_EQ(fuel195_rt()->hopper_slot, container + FUEL195_VSLOT_CONTAINER_CAN_PLACE);
+    CHECK_EQ(F<uint64_t>(container + FUEL195_VSLOT_CONTAINER_CAN_PLACE), B + FUEL195_RVA_CONTAINER_SIDED);
+    CHECK(F<uint64_t>(menu + FUEL195_VSLOT_QUICK_MOVE) != B + FUEL195_RVA_QUICK_MOVE);
     CHECK_EQ(fuel195_rt()->table.count, 4u);
     CHECK(fuel195_lookup(fuel195_rt(), by_id((unsigned)lce_loader_item_id(g_l, "fueltest:gem"))) != nullptr);
     CHECK(fuel195_lookup(fuel195_rt(), by_id((unsigned)lce_loader_item_id(g_l, "fueltest:ember"))) != nullptr);
@@ -1024,6 +1043,42 @@ static void scenario_fuel_publish() {
     CHECK(lua_fuel && lua_fuel->ticks == 1234);
     const auto *lua_inline = fuel195_lookup(fuel195_rt(), by_id((unsigned)lce_loader_item_id(g_l, "luafuel:inline")));
     CHECK(lua_inline && lua_inline->ticks == 2345);
+    CHECK_EQ(lce195c_world_entry_allowed(&g_comp), 1);
+}
+
+static void scenario_fuelroute_stock_only() {
+    prepare_fuel_image();
+    constexpr unsigned paper_id = 339;
+    void *paper = fake_alloc(0xa0);
+    item_ctor(paper);
+    g_reg[paper_id] = (uintptr_t)paper;
+    install("fuelroute");
+    files["/data/lce-mods/fuelroute/enabled"] = {};
+    boot(true, true, true);
+    CHECK_EQ(lce_loader_commit(g_l), LCE_OK);
+    CHECK_EQ(lce_loader_mod_count(g_l), 1u);
+    const lce_mod_report *report = mod("fuelroute");
+    CHECK(report && report->state == LCE_MOD_LIVE && report->items == 0u);
+    const lce_plan *plan = lce_loader_plan(g_l);
+    CHECK(plan && plan == g_comp.plan);
+    if (!plan) return;
+    CHECK_EQ(plan->item_count, 0u);
+    CHECK_EQ(plan->recipe_count, 0u);
+    CHECK_EQ(g_comp.items.smelt_count, 0u);
+    CHECK_EQ(g_comp.items.brew_count, 0u);
+    CHECK_EQ(g_comp.fuel_count, 1u);
+    CHECK_EQ(g_providers.size(), 0u);
+    CHECK_EQ(lce195c_world_entry_allowed(&g_comp), 0);
+    CHECK_EQ(lce195c_phase_blocks_hook(&g_comp), 1);
+    CHECK_EQ(lce195c_phase_after_items(&g_comp), 1);
+    CHECK_EQ(lce195c_phase_late(&g_comp), 1);
+    CHECK_EQ(lce195c_phase_state(&g_comp, LCE195C_PH_FUEL), LCE195C_DONE);
+    CHECK(logged("LCE_SDK phase=fuel rc=1 installed 1 fuel(s)"));
+    CHECK_EQ(fuel195_rt()->table.count, 1u);
+    const fuel195_entry *fuel = fuel195_lookup(fuel195_rt(), (uintptr_t)paper);
+    CHECK(fuel && fuel->ticks == 600u && fuel->remainder == 0u);
+    CHECK_EQ(fuel195_rt()->quick_move_slot, B + FUEL195_RVA_FURNACE_MENU_VT + FUEL195_VSLOT_QUICK_MOVE);
+    CHECK_EQ(fuel195_rt()->hopper_slot, B + FUEL195_RVA_CONTAINER_VT + FUEL195_VSLOT_CONTAINER_CAN_PLACE);
     CHECK_EQ(lce195c_world_entry_allowed(&g_comp), 1);
 }
 
@@ -1304,6 +1359,7 @@ int main(int argc, char **argv) {
     run("Lua texture registration to item and terrain owners", scenario_lua_texture);
     run("fuel capability binding", scenario_fuel_binding);
     run("fuel startup publication", scenario_fuel_publish);
+    run("fuelroute stock-only publication", scenario_fuelroute_stock_only);
     run("fuel installation failure blocks entry", scenario_fuel_install_failure);
     run("full startup order", scenario_full);
     run("renderers missing -> world entry blocked", scenario_renderers_fail);

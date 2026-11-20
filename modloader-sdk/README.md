@@ -59,7 +59,7 @@ integration/verify-patch.sh /tmp/v     # base hashes, patch dry-run, compile wit
   - audio and visuals: sound clones, **custom audio from WAV** (audio195), and tinted stock particles from event callbacks;
   - localisation, including mod string ids in the game's Localizer;
   - Lua scripts with texture, block, mob, biome and structure registration, server tick pacing, services, commands/keybinds, and multiplayer item/block ID sync.
-- **Experimental fuel:** custom fuel is opt-in. A PS4 test verified manually placed inline and explicit custom fuels in a furnace, including save and reload. Hopper and Quick Move behavior remain unverified. See [INTEGRATION.md](INTEGRATION.md) for the build flag, profile and limitations.
+- **Experimental fuel:** custom fuel is opt-in. A PS4 test verified manually placed inline and explicit custom fuels in a furnace, including save and reload. A later retail 1.95 PS4 test verified all three routes with a fuel-only package that registers ordinary Paper for 600 ticks. See [INTEGRATION.md](INTEGRATION.md) for the build flag, profile and limitations.
 - **Not possible on 1.95 yet (refused with the reason):**
   - dimensions, custom mob skins and loot, custom armour layers, native screens/menus;
   - per-type limits: identity-checked effect/enchantment clones, new effect icon art, nether/end biomes.
