@@ -228,6 +228,7 @@ int main() {
     CHECK_EQ(le195_configure(&mod, g_base, &n, &mem, &opt, &plan2, err, sizeof err), 0);         // duplicate key
     CHECK_EQ(le195_publish_types(&mod), 0);                                                       // not configured
     CHECK_EQ(le195_configure(&mod, g_base, &n, &mem, &opt, &plan, err, sizeof err), 1);
+    CHECK_EQ(le195_spawn_vtable(&ruby), 0);
     CHECK_EQ(mod.count, 2);
     CHECK_EQ(ext[0].id, 150); CHECK_EQ(ext[2].id, 151); CHECK_EQ(ext[1].id, -1);
     CHECK(le195_type_mask(&mod, "ruby:ruby_zombie") == (0x5d550040ull | (1ull << 34)));
@@ -259,6 +260,7 @@ int main() {
 
     // ---- publish_types ------------------------------------------------------
     CHECK_EQ(le195_publish_types(&mod), 1);
+    CHECK_EQ(le195_spawn_vtable(&ruby), 0);
     CHECK_EQ(g_regs.size(), 2);
     CHECK(g_regs[0].name == "ruby:ruby_zombie" && g_regs[0].old == "Zombie" && g_regs[0].id == 150 && g_regs[0].f == le195_factory(0));
     CHECK(g_regs[1].name == "ruby:hog" && g_regs[1].old == "Pig" && g_regs[1].mask == (0x2d680003ull | (2ull << 34)));
@@ -338,10 +340,17 @@ int main() {
     zr_obj[0] = g_base + 0x1348300 + 0x10; pr_obj[0] = g_base + 0x133dcf8;
     uintptr_t disp = (uintptr_t)fake_alloc(0x140);
     CHECK_EQ(le195_publish_renderers(&mod, disp), 0);          // no base renderers registered
+    CHECK_EQ(le195_spawn_vtable(&ruby), 0);
     CHECK(g_render.count(le195_type_mask(&mod, "ruby:ruby_zombie")) == 0);
     mod.renderers_state = 0;
     g_render[0x5d550040] = zr_obj; g_render[0x2d680003] = pr_obj;
     CHECK_EQ(le195_publish_renderers(&mod, disp), 1);
+    CHECK_EQ(le195_spawn_vtable(&ruby), *(uintptr_t *)z);
+    CHECK(le195_spawn_vtable(&hog) && le195_spawn_vtable(&hog) != le195_spawn_vtable(&ruby));
+    CHECK_EQ(le195_spawn_vtable(&dup), 0);   // same values without plan ownership
+    CHECK_EQ(le195_spawn_vtable(nullptr), 0);
+    CHECK_EQ(le195_configure(&mod, g_base, &n, &mem, &opt, &plan, err, sizeof err), 0);
+    CHECK_EQ(le195_spawn_vtable(&ruby), *(uintptr_t *)z);
     CHECK(g_render[le195_type_mask(&mod, "ruby:ruby_zombie")] == zr_obj && g_render[le195_type_mask(&mod, "ruby:hog")] == pr_obj);
     CHECK_EQ(g_dispatcher_seen, disp);
 

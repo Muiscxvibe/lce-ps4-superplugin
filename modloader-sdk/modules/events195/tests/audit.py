@@ -138,6 +138,16 @@ PINS = {0x2762a0: bytes([0xc7,0x87,0xc0,0x01,0,0,0,0,0,0,0xc3]), 0x380b70: bytes
         0xc61686: bytes([0x4d,0x8b,0xbd,0x68,0x0b,0x00,0x00]),                                      # local player +0xb68 = listener
         0x165d2e: b'\xe8' + struct.pack('<i', 0x1f2080 - 0x165d33),                                     # mobAttack
         0x1f22f7: b'\xe8' + struct.pack('<i', 0x2871a0 - 0x1f22fc), 0x2871c6: b'\x48\x8d\x05' + struct.pack('<i', 0x124cb38 - 0x2871cd)}
+# Block::use call sites set hand and three hit floats, followed by the two stack arguments.
+PINS.update({
+    0xc8f0f9: bytes.fromhex('48 8b 80 c0 02 00 00'),  # client virtual slot +0x2c0
+    0xc8f129: bytes.fromhex('44 8b 4d 10 c5 fa 10 85 38 fe ff ff c5 fa 10 8d 40 fe ff ff c5 fa 10 95 48 fe ff ff'),
+    0xc8f155: bytes.fromhex('c7 44 24 08 00 00 00 00 48 89 04 24'),  # simulate, Direction
+    0xce99cd: bytes.fromhex('4c 8b b0 c0 02 00 00'),  # server virtual slot +0x2c0
+    0xce99f5: bytes.fromhex('44 8b 8d 84 fe ff ff c5 fa 10 85 80 fe ff ff c5 fa 10 8d 7c fe ff ff c5 fa 10 95 70 fe ff ff'),
+    0xce9a24: bytes.fromhex('c7 44 24 08 00 00 00 00 4c 89 bd 58 fe ff ff 48 89 04 24 41 ff d6'),
+    0x2085b6: bytes.fromhex('8a 45 18'),  # DispenserBlock::use reads simulate
+})
 # every kPins entry of services195.cpp (the bytes the module checks at init before binding a native)
 import pathlib
 src = (pathlib.Path(__file__).resolve().parent.parent / 'services195.cpp').read_text()

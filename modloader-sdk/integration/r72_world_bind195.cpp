@@ -14,6 +14,7 @@
 #include <stddef.h>
 #include <stdint.h>
 #include <string.h>
+#include "../modules/entities195/entities195.h"
 #include "../modules/events195/ev195.h"
 #include "../modules/events195/services195.h"
 #include "../loader/retail195/host_ps4.h"
@@ -34,10 +35,13 @@ typedef struct mc195_world_spawn {
 } mc195_world_spawn;
 typedef int (*mc195_world_after_spawn)(void *, const mc195_world_context *, uintptr_t object, uintptr_t control);
 int mc195_world_spawn_entity_ex(const mc195_world_context *, const mc195_world_spawn *, void *, mc195_world_after_spawn);
+int mc195_world_spawn_entity_exact(const mc195_world_context *, const mc195_world_spawn *, uintptr_t expected_vtable)
+    __attribute__((weak));
 }
 
 namespace {
 uintptr_t g_base;
+const lce_plan *g_plan;
 
 int held(void *, uintptr_t level) {
     const lce195_frame *f = lce195_ev_frame();
@@ -84,6 +88,16 @@ int op_spawn(void *, const lce195_view *v, const char *key, double x, double y, 
     Ctx c; make(c, v);
     mc195_world_spawn s{};
     s.id = key; s.x = x; s.y = y; s.z = z;
+    if (g_plan) {
+        for (uint32_t i = 0; i < g_plan->ext_count; ++i) {
+            const lce_plan_ext &x = g_plan->ext[i];
+            if (x.type != LCE_EXT_ENTITY || strcmp(x.key, key)) continue;
+            uintptr_t vt = le195_spawn_vtable((const lce_entity_desc2 *)x.desc);
+            if (!vt || !mc195_world_spawn_entity_exact) return 0;
+            // The events195 tracker copies the primary vtable and only handles stock slot addresses.
+            return mc195_world_spawn_entity_exact(&c.w, &s, vt);
+        }
+    }
     return mc195_world_spawn_entity_ex(&c.w, &s, nullptr, want_track ? track : nullptr);
 }
 int op_get(void *, const lce195_view *v, int32_t x, int32_t y, int32_t z, uint16_t *id, uint8_t *meta) {
@@ -110,9 +124,10 @@ int op_explode(void *, const lce195_view *v, double x, double y, double z, float
 }
 }  // namespace
 
-extern "C" const void *lce_sdk_world_ops(uintptr_t base) {
+extern "C" const void *lce_sdk_world_ops(uintptr_t base, const lce_plan *plan) {
     static lce195_world_ops ops;
     g_base = base;
+    g_plan = plan;
     memset(&ops, 0, sizeof ops);
     ops.set_block = op_set_block;
     ops.get_block = op_get;

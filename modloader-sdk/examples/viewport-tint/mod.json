@@ -1,0 +1,11 @@
+{
+  "id": "viewtint",
+  "name": "Cool Viewport Tint",
+  "version": "1.0.0",
+  "config": {
+    "lce_visual.viewport_tint_v1": {
+      "default": "#22447740",
+      "comment": "RGBA color for the optional PS4 viewport effect. Set alpha to 00 to disable."
+    }
+  }
+}

@@ -28,7 +28,11 @@
 #include <stddef.h>
 #include <stdio.h>
 #include <string.h>
+#include "sdk_creative_blocks.h"
 #include "../loader/loader.h"
+#if defined(LCE_EXPERIMENTAL_VIEWPORT_TINT)
+#include "viewport_tint_config.hpp"
+#endif
 #include "../loader/package.h"
 #include "../loader/retail195/composite195.h"
 #include "../loader/retail195/host_ps4.h"
@@ -45,7 +49,7 @@ static_assert(offsetof(lce195_view, tick) == offsetof(mc195_lucky_server_view, t
    items when the game builds Item::items). Weak so a build without the module
    links unchanged. */
 /* r72_world_bind195.cpp: set_block / spawn / loaded / explode through the r72 Lucky Block world helpers. */
-extern "C" const void *lce_sdk_world_ops(uintptr_t base);   /* lce195_world_ops* (kept opaque: see services_glue195.cpp) */
+extern "C" const void *lce_sdk_world_ops(uintptr_t base, const lce_plan *plan);   /* lce195_world_ops* (see services_glue195.cpp) */
 extern "C" int lce_netsync_configure_from_loader(const lce_loader *, int, void (*)(const char *)) __attribute__((weak));
 
 namespace {
@@ -59,6 +63,12 @@ uintptr_t g_base;
 void (*g_log)(const char *);
 unsigned g_boot_state;        // 0 none, 1 booting, 2 armed, 3 nothing to do, 4 refused, 5 uncertain
 unsigned g_events_ready, g_late_done;
+uint32_t g_viewport_tint;
+#if defined(LCE_WAYPOINT_PACKAGES)
+constexpr unsigned kLayerWaypointLimit = 64;
+lce_pkg_waypoint g_waypoints[LCE_PKG_WAYPOINT_LAYERS][kLayerWaypointLimit];
+unsigned g_waypoint_count[LCE_PKG_WAYPOINT_LAYERS];
+#endif
 
 void logline(const char *line) {
     if (!g_log) return;
@@ -202,6 +212,9 @@ extern "C" int lce_sdk_boot(uintptr_t attested_base, void (*log)(const char *)) 
     // the user enabled load: the plugin's Mods list keeps <dir>/enabled in step
     // with its Next-launch choice before this boot (crashlog-build sdk_mods_list.cpp).
     cfg.flags = LCE_LOADER_REQUIRE_ENABLED;
+#if defined(LCE_WAYPOINT_PACKAGES)
+    cfg.flags |= LCE_LOADER_WAYPOINT_PACKAGES;
+#endif
     lce195_default_id_space(&cfg.space);
     // Boot runs before the game builds Item::items, so no game function may be
     // called here. Occupancy at allocation time = static vanilla table +
@@ -218,7 +231,8 @@ extern "C" int lce_sdk_boot(uintptr_t attested_base, void (*log)(const char *)) 
     lce_loader_set_script_runner(g_loader, lce195c_script_runner, &g_composite);
     lce_loader_discover(g_loader);
     lce_status st = lce_loader_commit(g_loader);
-    if (st == LCE_OK && g_events_ready && !lce195g_services_install(g_loader, attested_base, lce_sdk_world_ops(attested_base)))
+    if (st == LCE_OK && g_events_ready &&
+        !lce195g_services_install(g_loader, attested_base, lce_sdk_world_ops(attested_base, lce_loader_plan(g_loader))))
         logline("LCE_SDK services: services195 refused installation; runtime services report UNSUPPORTED");
     uint32_t live = 0;
     for (uint32_t i = 0; i < lce_loader_mod_count(g_loader); ++i) {
@@ -237,8 +251,30 @@ extern "C" int lce_sdk_boot(uintptr_t attested_base, void (*log)(const char *)) 
     unsigned final_state = st != LCE_OK ? (lce195_backend_status(&g_composite.items) == LCE195_SDK_UNCERTAIN ? 5u : 4u) : live ? 2u : 3u;
     if (lce_netsync_configure_from_loader && !lce_netsync_configure_from_loader(g_loader, final_state == 2u, g_log))
         logline("LCE_SDK netsync: ledger not representable; the server will see an empty mod ID table");
+#if defined(LCE_EXPERIMENTAL_VIEWPORT_TINT)
+    if (final_state == 2u) g_viewport_tint = lce_viewport_tint::committed_color(g_loader);
+#endif
+#if defined(LCE_WAYPOINT_PACKAGES)
+    if (final_state == 2u) {
+        for (unsigned layer = 0; layer < LCE_PKG_WAYPOINT_LAYERS; ++layer) {
+            unsigned total = lce_loader_waypoints(g_loader, layer, g_waypoints[layer], kLayerWaypointLimit);
+            g_waypoint_count[layer] = total < kLayerWaypointLimit ? total : kLayerWaypointLimit;
+            if (total > kLayerWaypointLimit) {
+                char line[100];
+                snprintf(line, sizeof line, "LCE_SDK waypoints: layer %u keeps %u of %u package markers",
+                         layer, kLayerWaypointLimit, total);
+                logline(line);
+            }
+        }
+    }
+#endif
     __atomic_store_n(&g_boot_state, final_state, __ATOMIC_RELEASE);
     return final_state == 2u ? 1 : final_state == 5u ? -1 : 0;
+}
+
+/* The release of the final boot state publishes the immutable color. */
+extern "C" uint32_t lce_sdk_viewport_tint_v1(void) {
+    return __atomic_load_n(&g_boot_state, __ATOMIC_ACQUIRE) == 2u ? g_viewport_tint : 0;
 }
 
 /* 0 none, 1 booting, 2 armed, 3 nothing to load, 4 refused, 5 uncertain;
@@ -264,6 +300,21 @@ extern "C" int lce_sdk_blocks_hook_waiting(void) { return lce195c_phase_state(&g
 extern "C" int lce_sdk_after_items(void) {
     if (__atomic_load_n(&g_boot_state, __ATOMIC_ACQUIRE) != 2u) return 1;
     return lce195c_phase_after_items(&g_composite);
+}
+
+extern "C" int lce_sdk_creative_blocks_wanted(void) {
+    return __atomic_load_n(&g_boot_state, __ATOMIC_ACQUIRE) == 2u && lce195c_creative_blocks_wanted(&g_composite);
+}
+
+extern "C" int lce_sdk_creative_block_entries(lce_sdk_creative_block_entry *out, uint32_t capacity) {
+    if (!out && capacity) return -1;
+    return __atomic_load_n(&g_boot_state, __ATOMIC_ACQUIRE) == 2u
+        ? lce195c_creative_block_entries(&g_composite, out, capacity) : 0;
+}
+
+extern "C" const char *lce_sdk_creative_block_key(uintptr_t item, uint32_t item_id) {
+    return __atomic_load_n(&g_boot_state, __ATOMIC_ACQUIRE) == 2u
+        ? lce195c_creative_block_key(&g_composite, item, item_id) : nullptr;
 }
 
 /* Phase 7: called from super.cpp ui_tick on the native UI thread. Runs the
@@ -326,6 +377,23 @@ extern "C" int lce_sdk_chat_submit(const char *utf8_line) { return g_events_read
  *    0 not among the discovered mods
  *    1 live (registered at this boot); version gets the package version
  *    2 discovered but rejected or dropped (reason in the LCE_SDK log line) */
+#if defined(LCE_WAYPOINT_PACKAGES)
+// The immutable package snapshot is complete before boot state 2 is published.
+extern "C" unsigned lce_sdk_waypoints_available(void) {
+    if (__atomic_load_n(&g_boot_state, __ATOMIC_ACQUIRE) != 2u) return 0;
+    unsigned count = 0;
+    for (unsigned n : g_waypoint_count) count += n;
+    return count;
+}
+
+extern "C" size_t lce_sdk_copy_waypoints(uint32_t layer, lce_pkg_waypoint *out, size_t cap) {
+    if (__atomic_load_n(&g_boot_state, __ATOMIC_ACQUIRE) != 2u || !out || layer >= LCE_PKG_WAYPOINT_LAYERS) return 0;
+    const size_t count = g_waypoint_count[layer] < cap ? g_waypoint_count[layer] : cap;
+    memcpy(out, g_waypoints[layer], count * sizeof *out);
+    return count;
+}
+#endif
+
 extern "C" int lce_sdk_mod_state(const char *modid, char *version, size_t cap) {
     if (version && cap) version[0] = 0;
     const unsigned st = __atomic_load_n(&g_boot_state, __ATOMIC_ACQUIRE);

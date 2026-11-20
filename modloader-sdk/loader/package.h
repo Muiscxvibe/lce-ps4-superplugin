@@ -27,6 +27,7 @@ typedef struct {
     const lce_pkg_entity *entities; uint32_t entity_count;
     const lce_pkg_ore *ores; uint32_t ore_count;
     const lce_pkg_dep *deps; uint32_t dep_count;
+    const lce_pkg_waypoint *waypoints; uint32_t waypoint_count;
     /* API 1.1 */
     const lce_pkg_script *scripts; uint32_t script_count;
     const uint32_t *ext; uint32_t ext_words, ext_count;   /* raw EXT section */

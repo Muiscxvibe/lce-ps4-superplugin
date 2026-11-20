@@ -198,6 +198,9 @@ int le195_publish_spawns(le195_module *m, int32_t (*biome_id)(const char *key));
 /* Phase 4. dispatcher = *(Minecraft+0x220). */
 int le195_publish_renderers(le195_module *m, uintptr_t dispatcher);
 
+/* The spawned object must have this exact primary vtable before insertion.
+ * Returns zero until renderers are published or for a descriptor outside the plan. */
+uintptr_t le195_spawn_vtable(const lce_entity_desc2 *desc);
 int32_t le195_type_id(const le195_module *m, const char *key);
 uint64_t le195_type_mask(const le195_module *m, const char *key);
 /* The GetType override installed at +0x60 of every private vtable. */

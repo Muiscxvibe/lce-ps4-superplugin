@@ -808,7 +808,11 @@ extern "C" int lce195c_phase_after_items(lce195c *c) {
     for (uint32_t i = 0; i < g_blocks.count; ++i)   // blocks195 drops a block whose construction failed, alone (never registered)
         if (g_blocks.blocks[i].dropped)
             logf(c, "LCE_SDK block %s dropped (not registered): %s", g_blocks.blocks[i].desc ? g_blocks.blocks[i].desc->key : "?", g_blocks.blocks[i].drop_reason);
-    if (blocks != 1) { c->phase[LCE195C_PH_AFTER_ITEMS] = code_of(blocks < 0 ? -1 : 0); return blocks < 0 ? -1 : 0; }
+    if (blocks != 1) {
+        c->phase[LCE195C_PH_AFTER_ITEMS] = code_of(blocks < 0 ? -1 : 0);
+        __atomic_store_n(&c->block_items_publication, 2u, __ATOMIC_RELEASE);
+        return blocks < 0 ? -1 : 0;
+    }
     c->items_thread = tid(c);
     __atomic_store_n(&c->items_window, 1u, __ATOMIC_RELEASE);
     int rc = CALL(LCE195C_PH_AFTER_ITEMS, &g_blocks, 0, b195_items_publish(&g_blocks));
@@ -817,7 +821,27 @@ extern "C" int lce195c_phase_after_items(lce195c *c) {
     char d[288];
     snprintf(d, sizeof d, "blockitems/map/names/fire %s; block event routes %u, block-item routes %u", rc == 1 ? "published" : g_blocks.last_error, c->block_routes, c->block_item_routes);
     mark(c, LCE195C_PH_AFTER_ITEMS, rc, d);
+    __atomic_store_n(&c->block_items_publication, rc == 1 ? 1u : 2u, __ATOMIC_RELEASE);
     return rc;
+}
+
+extern "C" int lce195c_creative_blocks_wanted(const lce195c *c) {
+    if (!c || c->state != 2 || !c->plan) return 0;
+    for (uint32_t i = 0; i < c->plan->block_count; ++i)
+        if (c->plan->blocks[i].item_id) return 1;
+    return 0;
+}
+
+extern "C" int lce195c_creative_block_entries(const lce195c *c, struct lce_sdk_creative_block_entry *out, uint32_t capacity) {
+    if (!out && capacity) return -1;
+    if (!c) return 0;
+    const uint32_t published = __atomic_load_n(&c->block_items_publication, __ATOMIC_ACQUIRE);
+    return published == 1 ? b195_creative_entries(&g_blocks, out, capacity) : published == 2 ? -1 : 0;
+}
+
+extern "C" const char *lce195c_creative_block_key(const lce195c *c, uintptr_t item, uint32_t item_id) {
+    return c && __atomic_load_n(&c->block_items_publication, __ATOMIC_ACQUIRE) == 1
+        ? b195_creative_key(&g_blocks, item, item_id) : nullptr;
 }
 
 extern "C" int lce195c_phase_late(lce195c *c) {

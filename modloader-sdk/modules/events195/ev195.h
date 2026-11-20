@@ -108,10 +108,10 @@ int lce195_ev_block_item_use_on_thunk(void *item, const lce195_pair *player, voi
                                      int hand, const void *direction, float cx, float cy, float cz, bool test_only);
 
 /* Block use (API 1.2): mod Block private vtable slot +0x2c0 (stock 0x940b0 returns false). Returns 1 routed.
- * The thunk forwards every integer register and three stack words unchanged. */
+ * Hand is in r9d, hit coordinates in xmm0..2, Direction and simulate in the first two stack slots. */
 int lce195_ev_route_block_use(uintptr_t block_object, uint32_t block_id, uintptr_t original_use);
-uint64_t lce195_ev_block_use_thunk(uintptr_t block, uintptr_t level, uintptr_t pos, uintptr_t state, const lce195_pair *player,
-                                   uintptr_t r9, uintptr_t s0, uintptr_t s1, uintptr_t s2);
+bool lce195_ev_block_use_thunk(uintptr_t block, uintptr_t level, uintptr_t pos, uintptr_t state, const lce195_pair *player,
+                              int hand, const void *direction, float cx, float cy, float cz, bool simulate);
 /* API 1.3 block callbacks on the same private Block vtable copy. Each stock body is a bare `ret` (natives195.h), so a
  * route is accepted only when the slot still holds it. Thunks dispatch, then call the original. */
 int lce195_ev_route_block_tick(uintptr_t block_object, uint32_t block_id, uintptr_t original_tick);         /* +0x1f0 */

@@ -12,6 +12,7 @@ const uint32_t le195_base_mob_count = sizeof le195_base_mobs / sizeof le195_base
 namespace {
 
 le195_module *g_mod;  // process lifetime; one module per process
+le195_module *g_spawn_module;  // published to server threads after renderers
 alignas(16) uintptr_t g_vt[LE195_MAX_TYPES][2 + LE195_MAX_SLOTS];
 
 void set_err(char *err, uint32_t cap, const char *msg) { if (err && cap) snprintf(err, cap, "%s", msg); }
@@ -220,6 +221,7 @@ int le195_configure(le195_module *m, uintptr_t base, const le195_natives *n, con
                     const le195_options *opt, lce_plan *plan, char *err, uint32_t cap) {
     if (!m || !n || !mem || !plan || !base) { set_err(err, cap, "entities195: missing arguments"); return 0; }
     if (g_mod && g_mod != m) { set_err(err, cap, "entities195: another module instance is active"); return 0; }
+    if (__atomic_load_n(&g_spawn_module, __ATOMIC_ACQUIRE)) { set_err(err, cap, "entities195: renderers already published"); return 0; }
     memset(m, 0, sizeof *m);
     m->base = base; m->n = *n; m->mem = *mem;
     if (opt) m->opt = *opt;
@@ -419,7 +421,17 @@ int le195_publish_renderers(le195_module *m, uintptr_t dispatcher) {
         *slot = base_r[k];   // shared stock renderer object: same model and skin as the base mob
     }
     m->renderers_state = LE195_TYPES_DONE;
+    __atomic_store_n(&g_spawn_module, m, __ATOMIC_RELEASE);
     return 1;
+}
+
+uintptr_t le195_spawn_vtable(const lce_entity_desc2 *desc) {
+    const le195_module *m = __atomic_load_n(&g_spawn_module, __ATOMIC_ACQUIRE);
+    if (!m || !desc) return 0;
+    for (uint32_t k = 0; k < m->count; ++k) {
+        if (m->types[k].desc == desc) return (uintptr_t)&g_vt[k][2];
+    }
+    return 0;
 }
 
 int32_t le195_type_id(const le195_module *m, const char *key) {

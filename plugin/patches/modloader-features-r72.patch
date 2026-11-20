@@ -1,0 +1,596 @@
+--- a/r72-session-candidate/loader/debug_tabs_view_diagnostics_195/bindings.cpp
++++ b/r72-session-candidate/loader/debug_tabs_view_diagnostics_195/bindings.cpp
+@@ -92,16 +92,18 @@
+   ops.read(ops.context,player+0xa40,observed.online,sizeof observed.online) &&
+   !memcmp(&observed,&expected,sizeof observed);
+ }
+-bool resolve_watch(const mc195_pad_watch *watch,uint64_t now,uint32_t w,uint32_t h,Mc195WatchView *out,const mc195_nbt_player *identity=nullptr,const Mc195WatchView *expected_view=nullptr,bool (*commit)(void *)=nullptr,void *commit_context=nullptr){
++bool resolve_watch(const mc195_pad_watch *watch,uint64_t now,uint32_t w,uint32_t h,Mc195WatchView *out,const mc195_nbt_player *identity=nullptr,const Mc195WatchView *expected_view=nullptr,bool (*commit)(void *)=nullptr,void *commit_context=nullptr,bool single=false){
+  if(!watch || !out || !configured || !ops.owner(ops.context) || watch->slot<0 || watch->slot>=4 ||
+     mc195_debug_pad_watch_current(watch,now)!=1)return false;
+  uintptr_t expected=ops.client(ops.context);if(!expected || !ops.try_player_lease(ops.context,expected))return false;
+  WatchContext context{watch,now};Mc195PlayerViewAccess access{&context,watch_eligible,read};
+- Mc195PlayerView chosen{};unsigned chosen_slot=0,count=0;bool ok=true;
++ Mc195PlayerView chosen{};unsigned chosen_slot=0,count=0,players=0;bool ok=true;
+  for(unsigned slot=0;slot<4;slot++){
+   uintptr_t p=0,mode=0;
+   if(expected>UINTPTR_MAX-0x100 || !ops.read(ops.context,expected+0x80+slot*24,&p,sizeof p) ||
+      !ops.read(ops.context,expected+0xe0+slot*8,&mode,sizeof mode)){ok=false;break;}
++  // A player can be attached before its mode or split-screen section updates.
++  if(single && p && ++players>1){ok=false;break;}
+   if(!p || !mode)continue;
+   int32_t pad=-1;if(p>UINTPTR_MAX-0xc6c || !ops.read(ops.context,p+0xc68,&pad,sizeof pad)){ok=false;break;}
+   if(pad!=watch->slot)continue;
+@@ -109,7 +111,7 @@
+   if(!mc195_player_view(&access,expected,slot,watch->slot,w,h,&candidate) || ++count!=1){ok=false;break;}
+   chosen=candidate;chosen_slot=slot;
+  }
+- if(ok)ok=count==1 && watch_eligible(&context,expected,chosen_slot) &&
++ if(ok)ok=count==1 && (!single || chosen.section==0) && watch_eligible(&context,expected,chosen_slot) &&
+   (!identity || (watch_identity(chosen.player,*identity) &&
+                  watch_identity(chosen.player,*identity) && watch_eligible(&context,expected,chosen_slot)));
+  Mc195WatchView value{};
+@@ -134,6 +136,18 @@
+   next.client==old->client && next.player==old->player && next.mode==old->mode &&
+   next.slot==old->slot && next.section==old->section && !memcmp(&next.rectangle,&old->rectangle,sizeof next.rectangle);
+ }
++bool mc195_watch_view_single(const mc195_pad_watch *watch,uint64_t now,uint32_t w,uint32_t h,Mc195WatchView *out){
++ if(!out)return false;*out={};
++ return resolve_watch(watch,now,w,h,out,nullptr,nullptr,nullptr,nullptr,true);
++}
++bool mc195_watch_view_single_current(const Mc195WatchView *old,uint64_t now){
++ if(!old)return false;Mc195WatchView next{};
++ return resolve_watch(&old->watch,now,old->width,old->height,&next,nullptr,old,nullptr,nullptr,true);
++}
++bool mc195_watch_view_single_commit(const Mc195WatchView *old,uint64_t now,bool (*commit)(void *),void *context){
++ if(!old || !commit)return false;Mc195WatchView next{};
++ return resolve_watch(&old->watch,now,old->width,old->height,&next,nullptr,old,commit,context,true);
++}
+ bool mc195_watch_view_identity(const mc195_pad_watch *watch,uint64_t now,uint32_t w,uint32_t h,const mc195_nbt_player *identity,Mc195WatchView *out){
+  if(!identity || !out)return false;*out={};return resolve_watch(watch,now,w,h,out,identity);
+ }
+--- a/r72-session-candidate/loader/debug_tabs_viewport_195/multi_bootstrap.cpp
++++ b/r72-session-candidate/loader/debug_tabs_viewport_195/multi_bootstrap.cpp
+@@ -6,6 +6,9 @@
+ #include "../../native-debug-plugin/present_data_hook.hpp"
+ #include "../../native-debug-plugin/cooperative-upgrade/menu-hierarchy-world-actions/tab_cooperation.hpp"
+ #include "../f3_server_195/hud.hpp"
++#if defined(LCE_EXPERIMENTAL_VIEWPORT_TINT)
++#include "viewport_tint.hpp"
++#endif
+ #include <stddef.h>
+ #include <string.h>
+ #if defined(__FreeBSD__)
+@@ -76,7 +79,14 @@
+  if(__atomic_exchange_n(&pending_invalidation,0u,__ATOMIC_ACQ_REL)){invalidate(nullptr);return;}
+  if(!thread || !thread->current() || !thread->matches_controller(controller) || !present_data_post_eligible(controller)){invalidate(nullptr);return;}
+  for(auto *s:slots)if(s && s->ready)if(!s->frame.ui_completed() || !s->frame.stage(controller))s->frame.abort();
+- for(unsigned i=0;i<4;i++){auto *s=slots[i];if(s && s->ready && s->raw.hud_render_ready())(void)mc195_f3_hud::render(i,s->compositor,controller);}
++ for(unsigned i=0;i<4;i++){
++  auto *s=slots[i];
++  if(!s || !s->ready || !s->raw.hud_render_ready())continue;
++  if(mc195_f3_hud::render(i,s->compositor,controller))continue;
++#if defined(LCE_EXPERIMENTAL_VIEWPORT_TINT)
++  if(i==0 && !mc195_f3_hud::enabled(i)) (void)mc195_viewport_tint::render(i,s->compositor,controller);
++#endif
++ }
+ }
+ }
+ bool initialize(OwnerThread *o,uintptr_t attested_base){
+@@ -129,4 +139,28 @@
+ bool f3_enabled(unsigned i){return initialized && thread->current() && i<4 && mc195_f3_hud::enabled(i);}
+ unsigned f3_state(unsigned i){return initialized && thread->current() && i<4?mc195_f3_hud::state(i):0;}
+ bool f3_toggle(unsigned i){return f3_available(i) && mc195_f3_hud::toggle(i,slots[i]->ready && slots[i]->compositor.observed_supported_target());}
++#if defined(LCE_OFFLINE_PREVIEW) && defined(LCE_F3_WAYPOINTS)
++namespace {
++bool waypoint_caller(unsigned i){
++ return session_bound(i) && slots[i]->raw.active() && mc195_debug_pad_current(&slots[i]->ticket);
++}
++}
++bool f3_waypoint_scope(unsigned i,lce_waypoint_scope *out){
++ return waypoint_caller(i) && mc195_f3_hud::waypoint_scope(i,out);
++}
++bool f3_waypoint_put(unsigned i,const lce_waypoint_scope &scope,const lce_waypoint &marker){
++ return waypoint_caller(i) && mc195_f3_hud::waypoint_put(i,scope,marker);
++}
++bool f3_waypoint_remove(unsigned i,const lce_waypoint_scope &scope,uint32_t id){
++ return waypoint_caller(i) && mc195_f3_hud::waypoint_remove(i,scope,id);
++}
++#if defined(LCE_WAYPOINT_PACKAGES)
++unsigned f3_package_waypoint_mode(unsigned i){
++ return waypoint_caller(i)?mc195_f3_hud::package_waypoint_mode(i,slots[i]->ticket.handle):0;
++}
++bool f3_package_waypoint_toggle(unsigned i){
++ return waypoint_caller(i) && mc195_f3_hud::package_waypoint_toggle(i,slots[i]->ticket.handle);
++}
++#endif
++#endif
+ }
+--- a/r72-session-candidate/loader/debug_tabs_viewport_195/multi_bootstrap.hpp
++++ b/r72-session-candidate/loader/debug_tabs_viewport_195/multi_bootstrap.hpp
+@@ -2,6 +2,9 @@
+ #include "../debug_pad_sessions_195/adapter.h"
+ #include "../../menu-render-bridge/owner_thread.hpp"
+ #include "../../menu-render-bridge/raw_pad_owner.hpp"
++#if defined(LCE_OFFLINE_PREVIEW) && defined(LCE_F3_WAYPOINTS)
++#include "lce_waypoints.h"
++#endif
+ /* Construction and all methods: authenticated UI owner thread only. The
+  * Store/input integrator must provide an adapted per-ticket RawPadOwner; the
+  * legacy singleton native_pad implementation is not safe for this API. */
+@@ -24,4 +27,15 @@
+ bool f3_enabled(unsigned slot);
+ unsigned f3_state(unsigned slot);
+ bool f3_toggle(unsigned slot);
++#if defined(LCE_OFFLINE_PREVIEW) && defined(LCE_F3_WAYPOINTS)
++// Bound, active debug pad and current authenticated F3 sample required.
++bool f3_waypoint_scope(unsigned slot,lce_waypoint_scope *);
++bool f3_waypoint_put(unsigned slot,const lce_waypoint_scope &,const lce_waypoint &);
++bool f3_waypoint_remove(unsigned slot,const lce_waypoint_scope &,uint32_t id);
++#if defined(LCE_WAYPOINT_PACKAGES)
++// 0 unavailable, 1 off, 2 selected for this authenticated pad and session.
++unsigned f3_package_waypoint_mode(unsigned slot);
++bool f3_package_waypoint_toggle(unsigned slot);
++#endif
++#endif
+ }
+--- /dev/null
++++ b/r72-session-candidate/loader/debug_tabs_viewport_195/viewport_tint.hpp
+@@ -0,0 +1,69 @@
++#pragma once
++#include "watch_view.h"
++#include "../../menu-render-bridge/post_ui_compositor.hpp"
++#include "../mod_menu_frontend_complete_packs_195/frontend.hpp"
++#include "lce_viewport_tint.h"
++#include <orbis/libkernel.h>
++
++extern "C" uint32_t lce_sdk_viewport_tint_v1();
++extern "C" uint64_t mc195_lucky_candidate_session(void *);
++extern "C" bool mc195_nbt_offline_ready();
++
++namespace mc195_viewport_tint {
++struct Frame {
++ uint64_t world;
++ mc195_pad_watch watch;
++ Mc195WatchView view;
++ menu_render::DirectColor color;
++};
++
++inline bool world_current(const Frame &f){
++ return f.world && mc195_nbt_offline_ready() &&
++  mc195_lucky_candidate_session(nullptr)==f.world;
++}
++inline bool whole_target(const Mc195Viewport &v,uint32_t width,uint32_t height){
++ return width && height && v.x==0 && v.y==0 && v.width==width && v.height==height;
++}
++inline bool resolve(void *opaque,uint32_t width,uint32_t height,Mc195Viewport *out){
++ auto &f=*static_cast<Frame *>(opaque);
++ const uint64_t now=sceKernelGetProcessTime();
++ if(!out || !now || !world_current(f) || !mc195_watch_view_single(&f.watch,now,width,height,&f.view) ||
++    !whole_target(f.view.rectangle,width,height))return false;
++ *out=f.view.rectangle;return true;
++}
++inline bool paint(void *opaque,const menu_render::DirectSink &sink,int x,int y,int width,int height){
++ const auto &f=*static_cast<const Frame *>(opaque);
++ return world_current(f) && width>0 && height>0 && sink.rect &&
++  sink.rect(sink.context,x,y,width,height,f.color);
++}
++inline bool current(void *opaque,const Mc195Viewport &viewport){
++ auto &f=*static_cast<Frame *>(opaque);
++ const uint64_t now=sceKernelGetProcessTime();
++ return now && world_current(f) && whole_target(viewport,f.view.width,f.view.height) &&
++  mc195_watch_view_single_current(&f.view,now);
++}
++struct Insert {const Frame *frame;bool (*publish)(void *);void *context;};
++inline bool locked_insert(void *opaque){
++ const auto &i=*static_cast<const Insert *>(opaque);
++ return world_current(*i.frame) && i.publish(i.context);
++}
++inline bool commit(void *opaque,const Mc195Viewport &viewport,bool (*publish)(void *),void *context){
++ auto &f=*static_cast<Frame *>(opaque);
++ const uint64_t now=sceKernelGetProcessTime();
++ if(!now || !publish || !world_current(f) || !whole_target(viewport,f.view.width,f.view.height))return false;
++ Insert insertion{&f,publish,context};
++ return mc195_watch_view_single_commit(&f.view,now,locked_insert,&insertion);
++}
++inline bool render(unsigned slot,menu_render::PostUiCompositor &compositor,void *controller){
++ const uint32_t rgba=lce_sdk_viewport_tint_v1();
++ const auto alpha=(uint8_t)rgba;
++ if(!alpha || alpha>LCE_VIEWPORT_TINT_MAX_ALPHA_V1 || slot!=0 ||
++    !compositor.target_ready() || mc195_mods::pending())return false;
++ const uint64_t now=sceKernelGetProcessTime();
++ Frame f{mc195_lucky_candidate_session(nullptr),{},{},
++         {(uint8_t)(rgba>>24),(uint8_t)(rgba>>16),(uint8_t)(rgba>>8),alpha}};
++ if(!now || !world_current(f) || mc195_debug_pad_watch((int)slot,now,&f.watch)!=1)return false;
++ const menu_render::ExternalOverlay overlay{&f,resolve,paint,current,commit};
++ return compositor.render_external(controller,overlay);
++}
++}
+--- a/r72-session-candidate/loader/debug_tabs_viewport_195/watch_view.h
++++ b/r72-session-candidate/loader/debug_tabs_viewport_195/watch_view.h
+@@ -17,6 +17,10 @@
+ };
+ bool mc195_watch_view(const mc195_pad_watch *,uint64_t now_us,uint32_t width,uint32_t height,Mc195WatchView *);
+ bool mc195_watch_view_current(const Mc195WatchView *,uint64_t now_us);
++// Full-target draws require exactly one player and a full-screen layout.
++bool mc195_watch_view_single(const mc195_pad_watch *,uint64_t,uint32_t,uint32_t,Mc195WatchView *);
++bool mc195_watch_view_single_current(const Mc195WatchView *,uint64_t);
++bool mc195_watch_view_single_commit(const Mc195WatchView *,uint64_t,bool (*)(void *),void *);
+ // Authenticated variants compare the copied player identity with the actual
+ // viewport player under the game player-array lease. The caller must also
+ // revalidate its world/session authority immediately before publication.
+--- a/r72-session-candidate/loader/f3_server_195/hud.cpp
++++ b/r72-session-candidate/loader/f3_server_195/hud.cpp
+@@ -1,6 +1,15 @@
+ #include "hud.hpp"
+ #include "f3_server.h"
+ #include "f3_draw.hpp"
++#if defined(LCE_OFFLINE_PREVIEW) && defined(LCE_F3_WAYPOINTS)
++#include "f3_waypoint_draw.hpp"
++extern "C" bool mc195_nbt_offline_ready();
++#if defined(LCE_WAYPOINT_PACKAGES)
++#include "f3_package_waypoints.hpp"
++extern "C" unsigned lce_sdk_waypoints_available();
++extern "C" size_t lce_sdk_copy_waypoints(uint32_t,lce_pkg_waypoint *,size_t);
++#endif
++#endif
+ #include "../debug_tabs_viewport_195/watch_view.h"
+ #include "../super_content_steel_nbt_save_195/nbt_integration.hpp"
+ #include <orbis/libkernel.h>
+@@ -13,6 +22,13 @@
+  Phase phase;mc195_pad_watch watch;uint64_t world,identity_deadline,sample_time;
+  bool pending,have_sample;mc195_f3_watch_ticket request;mc195_f3_reply sample;
+  mc195_nbt_player sample_identity;Mc195WatchView view;
++#if defined(LCE_OFFLINE_PREVIEW) && defined(LCE_F3_WAYPOINTS)
++ lce_waypoint_store waypoints;
++ bool waypoints_painted;
++#if defined(LCE_WAYPOINT_PACKAGES)
++ mc195_f3_waypoints::PackageMarkers package_markers;
++#endif
++#endif
+ };
+ Slot slots[4]{};
+ unsigned pipeline[4]{};
+@@ -22,6 +38,15 @@
+  return mc195_f3_scope_ready()==1 && s.world && mc195_lucky_candidate_session(nullptr)==s.world &&
+   mc195_hud_runtime_identity(&s.watch,s.world,out)==1;
+ }
++#if defined(LCE_OFFLINE_PREVIEW) && defined(LCE_F3_WAYPOINTS) && defined(LCE_WAYPOINT_PACKAGES)
++bool package_owner(unsigned slot,int32_t handle,mc195_f3_waypoints::PackageOwner &out){
++ if(slot>=4 || !mc195_nbt_offline_ready() || !lce_sdk_waypoints_available())return false;
++ auto &s=slots[slot];mc195_nbt_player id{};
++ if(s.phase!=active || s.watch.handle!=handle || !identity(s,&id))return false;
++ out={s.world,s.watch,id};
++ return true;
++}
++#endif
+ void closing_step(Slot &s){
+  if(s.pending){int r=mc195_f3_cancel_watch(&s.request);if(r==2)return;s.pending=false;}
+  if(s.watch.generation){int r=mc195_hud_runtime_close(&s.watch);if(r==2)return;}
+@@ -37,6 +62,21 @@
+ bool paint(void *opaque,const menu_render::DirectSink &sink,int x,int y,int width,int height){
+  auto &s=*static_cast<Slot *>(opaque);
+  bool painted=s.phase==active && s.have_sample && mc195_f3_draw(sink,x,y,width,height,s.sample);
++#if defined(LCE_OFFLINE_PREVIEW) && defined(LCE_F3_WAYPOINTS)
++ const unsigned slot=(unsigned)(&s-slots);
++ const bool offline=mc195_nbt_offline_ready();
++ const lce_waypoint_store *store=&s.waypoints;
++#if defined(LCE_WAYPOINT_PACKAGES)
++ lce_waypoint_scope scope{};
++ if(painted && offline && mc195_f3_waypoints::scope(slot,s.world,s.sample,&scope)){
++  const auto *package=s.package_markers.visible({s.world,s.watch,s.sample_identity},scope,offline);
++  if(package && package->count)store=package;
++ }
++#endif
++ s.waypoints_painted=painted && store->count && offline;
++ if(s.waypoints_painted)
++  painted=mc195_f3_waypoints::draw(sink,x,y,width,height,slot,s.world,s.sample,*store);
++#endif
+  if(painted)note(s,64u);return painted;
+ }
+ bool current(void *opaque,const Mc195Viewport &view){
+@@ -48,6 +88,9 @@
+ struct Commit {Slot *slot;bool (*insert)(void *);void *context;};
+ bool locked_insert(void *opaque){
+  auto &c=*static_cast<Commit *>(opaque);auto &s=*c.slot;uint64_t t=now();mc195_nbt_player id{};
++#if defined(LCE_OFFLINE_PREVIEW) && defined(LCE_F3_WAYPOINTS)
++ if(s.waypoints_painted && !mc195_nbt_offline_ready())return false;
++#endif
+  // The caller holds the game's player-array lease here; do not reacquire it.
+  bool inserted=s.phase==active && s.have_sample && t && t>=s.sample_time && t-s.sample_time<=250000 &&
+   identity(s,&id) && !memcmp(&id,&s.sample_identity,sizeof id) && c.insert(c.context);
+@@ -89,6 +132,10 @@
+  if(s.phase==closing){closing_step(s);return;}
+  uint64_t t=now();int watch=t?mc195_debug_pad_watch_current(&s.watch,t):0;
+  if(!t || !mc195_f3_scope_ready() || mc195_lucky_candidate_session(nullptr)!=s.world || watch==0){s.phase=closing;closing_step(s);return;}
++#if defined(LCE_OFFLINE_PREVIEW) && defined(LCE_F3_WAYPOINTS) && defined(LCE_WAYPOINT_PACKAGES)
++ const bool offline=mc195_nbt_offline_ready();
++ if(!offline)s.package_markers.clear();
++#endif
+  if(watch==2)return;
+  mc195_nbt_player id{};int ready=mc195_hud_runtime_identity(&s.watch,s.world,&id);
+  if(s.phase==admitting){if(ready==1){s.phase=active;note(s,4u);}else if(ready==0 || t>s.identity_deadline){s.phase=closing;closing_step(s);}return;}
+@@ -97,9 +144,24 @@
+  if(s.pending){
+   mc195_f3_reply value{};int rc=mc195_f3_take_watch(&s.request,&value);
+   if(rc==1){s.pending=false;s.sample=value;s.sample_time=value.sampled_us;s.sample_identity=id;
+-   s.have_sample=value.sampled_us && value.sampled_us<=t && t-value.sampled_us<=250000;if(s.have_sample)note(s,16u);}
++   s.have_sample=value.sampled_us && value.sampled_us<=t && t-value.sampled_us<=250000;if(s.have_sample)note(s,16u);
++#if defined(LCE_OFFLINE_PREVIEW) && defined(LCE_F3_WAYPOINTS)
++   if(s.waypoints.scope.session &&
++      (!s.have_sample || value.world<=s.world || value.world-s.world>3 ||
++       value.world-s.world-1!=s.waypoints.scope.layer ||
++       !mc195_nbt_offline_ready()))
++    lce_waypoints_reset(&s.waypoints,nullptr);
++#endif
++  }
+   else if(t>s.request.deadline_us){int cancel=mc195_f3_cancel_watch(&s.request);if(cancel!=2)s.pending=false;}
+  }
++#if defined(LCE_OFFLINE_PREVIEW) && defined(LCE_F3_WAYPOINTS) && defined(LCE_WAYPOINT_PACKAGES)
++ lce_waypoint_scope package_scope{};
++ const bool scoped=s.have_sample && !memcmp(&id,&s.sample_identity,sizeof id) &&
++                   mc195_f3_waypoints::scope(slot,s.world,s.sample,&package_scope);
++ s.package_markers.update({s.world,s.watch,id},t,offline,scoped?&package_scope:nullptr,
++                          s.sample_time,lce_sdk_copy_waypoints);
++#endif
+  if(!s.pending && t<=UINT64_MAX-500000){
+   mc195_f3_watch_ticket request{};int rc=mc195_f3_request_watch(&s.watch,s.world,t+500000,&request);
+   if(rc==1){s.request=request;s.pending=true;note(s,8u);}
+@@ -109,5 +171,38 @@
+  if(slot>=4 || slots[slot].phase!=active || !slots[slot].have_sample)return false;
+  menu_render::ExternalOverlay overlay{&slots[slot],resolve,paint,current,commit};return compositor.render_external(controller,overlay);
+ }
++#if defined(LCE_OFFLINE_PREVIEW) && defined(LCE_F3_WAYPOINTS)
++bool waypoint_scope(unsigned slot,lce_waypoint_scope *out){
++ if(slot>=4 || !out || !mc195_nbt_offline_ready() || state(slot)!=2)return false;
++ auto &s=slots[slot];mc195_nbt_player id{};
++ return identity(s,&id) && !memcmp(&id,&s.sample_identity,sizeof id) &&
++  mc195_f3_waypoints::scope(slot,s.world,s.sample,out);
++}
++bool waypoint_put(unsigned slot,const lce_waypoint_scope &scope,const lce_waypoint &marker){
++ lce_waypoint_scope current_scope{};
++ if(!waypoint_scope(slot,&current_scope) || current_scope.session!=scope.session ||
++    current_scope.layer!=scope.layer || current_scope.player!=scope.player)return false;
++ auto &store=slots[slot].waypoints;
++ if(!store.scope.session && !lce_waypoints_reset(&store,&current_scope))return false;
++ return lce_waypoints_put(&store,&current_scope,&marker)==1;
++}
++bool waypoint_remove(unsigned slot,const lce_waypoint_scope &scope,uint32_t id){
++ lce_waypoint_scope current_scope{};
++ return waypoint_scope(slot,&current_scope) && current_scope.session==scope.session &&
++  current_scope.layer==scope.layer && current_scope.player==scope.player &&
++  lce_waypoints_remove(&slots[slot].waypoints,&current_scope,id)==1;
++}
++#endif
++#if defined(LCE_OFFLINE_PREVIEW) && defined(LCE_F3_WAYPOINTS) && defined(LCE_WAYPOINT_PACKAGES)
++unsigned package_waypoint_mode(unsigned slot,int32_t handle){
++ mc195_f3_waypoints::PackageOwner owner{};
++ if(!package_owner(slot,handle,owner))return 0;
++ return slots[slot].package_markers.selected(owner)?2:1;
++}
++bool package_waypoint_toggle(unsigned slot,int32_t handle){
++ mc195_f3_waypoints::PackageOwner owner{};
++ return package_owner(slot,handle,owner) && slots[slot].package_markers.toggle(owner,now(),mc195_nbt_offline_ready());
++}
++#endif
+ void invalidate(unsigned slot){if(slot<4 && slots[slot].phase!=off){slots[slot].phase=closing;closing_step(slots[slot]);}}
+ }
+--- a/r72-session-candidate/loader/f3_server_195/hud.hpp
++++ b/r72-session-candidate/loader/f3_server_195/hud.hpp
+@@ -1,5 +1,8 @@
+ #pragma once
+ #include "../../menu-render-bridge/post_ui_compositor.hpp"
++#if defined(LCE_OFFLINE_PREVIEW) && defined(LCE_F3_WAYPOINTS)
++#include "lce_waypoints.h"
++#endif
+
+ // These calls are serialized on the established UI owner thread. The caller
+ // independently verifies the debug menu's bound pad before invoking toggle.
+@@ -16,4 +19,14 @@
+ void tick(unsigned slot);
+ bool render(unsigned slot,menu_render::PostUiCompositor &,void *controller);
+ void invalidate(unsigned slot);
++#if defined(LCE_OFFLINE_PREVIEW) && defined(LCE_F3_WAYPOINTS) && defined(LCE_WAYPOINT_PACKAGES)
++unsigned package_waypoint_mode(unsigned slot,int32_t handle);
++bool package_waypoint_toggle(unsigned slot,int32_t handle);
++#endif
++#if defined(LCE_OFFLINE_PREVIEW) && defined(LCE_F3_WAYPOINTS)
++// Use mc195_tabs' bound-pad entry points to check the caller's UI ownership.
++bool waypoint_scope(unsigned slot,lce_waypoint_scope *);
++bool waypoint_put(unsigned slot,const lce_waypoint_scope &,const lce_waypoint &);
++bool waypoint_remove(unsigned slot,const lce_waypoint_scope &,uint32_t id);
++#endif
+ }
+--- a/r72-session-candidate/loader/f3_server_195/test_watch_view.cpp
++++ b/r72-session-candidate/loader/f3_server_195/test_watch_view.cpp
+@@ -20,6 +20,7 @@
+ }
+ bool acquire(void *,uintptr_t c){if(leased || c!=(uintptr_t)client)return false;leased=true;return true;}
+ bool release(void *,uintptr_t c){if(!leased || c!=(uintptr_t)client)return false;leased=false;return true;}
++bool publish(void *p){assert(leased);++*static_cast<unsigned *>(p);return true;}
+ }
+ int main(){
+  assert(mc195_debug_view_configure({nullptr,owner,get_client,read_,acquire,release}));
+@@ -31,6 +32,27 @@
+  memcpy(player+0xc68,&pad,4);memcpy(player+0xc10,&section,4);
+  Mc195WatchView view{};assert(mc195_watch_view(&watch,101,1920,1080,&view));
+  assert(view.slot==0 && view.rectangle.width==1920 && mc195_watch_view_current(&view,102));
++ Mc195WatchView full{};
++ assert(mc195_watch_view_single(&watch,102,1920,1080,&full));
++ assert(mc195_watch_view_single_current(&full,102));
++ unsigned published=0;
++ assert(mc195_watch_view_single_commit(&full,102,publish,&published) && published==1);
++ // A second player can appear before its mode or the layout is updated.
++ uintptr_t second=(uintptr_t)replacement;
++ memcpy(client+0x80+24,&second,8);
++ assert(mc195_watch_view_current(&view,102));
++ assert(!mc195_watch_view_single(&watch,102,1920,1080,&full));
++ assert(!mc195_watch_view_single_current(&view,102));
++ assert(!mc195_watch_view_single_commit(&view,102,publish,&published) && published==1 && !leased);
++ // Ordinary F3 ownership still follows the changed split rectangle.
++ memcpy(client+0xe0+8,&mode,8);
++ section=1;memcpy(player+0xc10,&section,4);
++ assert(mc195_watch_view(&watch,102,1920,1080,&full));
++ assert(full.rectangle.height==540 && mc195_watch_view_current(&full,102));
++ second=0;memcpy(client+0x80+24,&second,8);memcpy(client+0xe0+8,&second,8);
++ assert(!mc195_watch_view_single(&watch,102,1920,1080,&full));
++ section=0;memcpy(player+0xc10,&section,4);
++ assert(mc195_watch_view_single(&watch,102,1920,1080,&full));
+  mc195_nbt_player id{};id.entity_id=42;id.offline[0]=7;
+  memcpy(player+0x18,&id.entity_id,4);memcpy(player+0xa24,id.offline,28);memcpy(player+0xa40,id.online,28);
+  assert(mc195_watch_view_identity(&watch,102,1920,1080,&id,&view));
+--- a/r72-session-candidate/loader/lucky_block_world_events_195/entity.cpp
++++ b/r72-session-candidate/loader/lucky_block_world_events_195/entity.cpp
+@@ -58,8 +58,7 @@
+  }
+  return n==count;
+ }
+-}
+-extern "C" int mc195_world_spawn_entity_report(const mc195_world_context *c,const mc195_world_spawn *s,void *opaque,mc195_world_after_spawn after,mc195_spawn_report *report){
++int spawn(const mc195_world_context *c,const mc195_world_spawn *s,void *opaque,mc195_world_after_spawn after,mc195_spawn_report *report,uintptr_t expected_vtable){
+  auto stage=[&](mc195_spawn_stage v){if(report)report->stage=v;};
+  auto done=[&](int rc){if(report)report->result=rc;return rc;};
+  if(report){report->stage=MC195_SPAWN_INPUT;report->result=0;}
+@@ -100,7 +99,8 @@
+  stage(MC195_SPAWN_VERIFY_NEW);
+  uintptr_t level=0,evt=0;double actual[3]={};
+  if(!read(c,entity.value.object+0x150,&level,8)||level!=c->level||
+-    !read(c,entity.value.object,&evt,8)||evt<c->base+0x1200000||evt>=c->base+0x134d928||
++    !read(c,entity.value.object,&evt,8)||
++    (expected_vtable?evt!=expected_vtable:(evt<c->base+0x1200000||evt>=c->base+0x134d928))||
+     !read(c,entity.value.object+0x170,actual,sizeof actual)||actual[0]!=s->x||actual[1]!=s->y||actual[2]!=s->z||
+     c->loaded(c->opaque,c->level,chunk(s->x),chunk(s->z))!=1||!held(c,tid))return done(-1);
+  stage(MC195_SPAWN_INSERT);
+@@ -114,6 +114,14 @@
+  if(!held(c,tid)||!read(c,entity.value.object+0x150,&level,8)||level!=c->level)return done(-1);
+  stage(MC195_SPAWN_COMPLETE);return done(1);
+ }
++}
++extern "C" int mc195_world_spawn_entity_report(const mc195_world_context *c,const mc195_world_spawn *s,void *opaque,mc195_world_after_spawn after,mc195_spawn_report *report){
++ return spawn(c,s,opaque,after,report,0);
++}
++extern "C" int mc195_world_spawn_entity_exact(const mc195_world_context *c,const mc195_world_spawn *s,uintptr_t expected_vtable){
++ if(!expected_vtable)return 0;
++ return spawn(c,s,nullptr,nullptr,nullptr,expected_vtable);
++}
+ extern "C" int mc195_world_spawn_entity_ex(const mc195_world_context *c,const mc195_world_spawn *s,void *opaque,mc195_world_after_spawn after){
+  return mc195_world_spawn_entity_report(c,s,opaque,after,nullptr);
+ }
+--- a/r72-session-candidate/loader/lucky_block_world_events_195/entity.h
++++ b/r72-session-candidate/loader/lucky_block_world_events_195/entity.h
+@@ -16,6 +16,10 @@
+  * server reports insertion; 0 before native construction; -1 uncertain after
+  * construction/insertion begins. The caller retains the loaded chunk scope. */
+ int mc195_world_spawn_entity(const mc195_world_context *,const mc195_world_spawn *);
++/* SDK custom-mob entry. The caller supplies the nonzero primary vtable of the
++ * exact published entity type. A different factory result is released before
++ * insertion. World, position and native ownership checks match the stock path. */
++int mc195_world_spawn_entity_exact(const mc195_world_context *,const mc195_world_spawn *,uintptr_t expected_vtable);
+ /* Optional synchronous initialization after the native server has accepted
+  * insertion. The factory's exact shared pair remains strongly owned throughout
+  * this call and exception cleanup. Pointers cannot escape the callback. Return
+--- a/r72-session-candidate/loader/lucky_block_world_events_195/test_native.cpp
++++ b/r72-session-candidate/loader/lucky_block_world_events_195/test_native.cpp
+@@ -76,12 +76,14 @@
+  Pair p{(uintptr_t)allocate(size),(uintptr_t)allocate(24)};q(p.control,base+0x123f000);*(uint32_t *)(p.control+8)=1;*(uint32_t *)(p.control+12)=1;q(p.control+16,p.object);return p;
+ }
+ double number(uintptr_t tag){assert(trees.at(tag).type==6);double n;memcpy(&n,(void*)(tag+8),8);return n;}
++const char16_t *expected_id=u"minecraft:pig";
++uintptr_t factory_vtable;
+ extern "C" void entity_load(Pair *out,uintptr_t nbt,uintptr_t owner){
+- assert(owner==level);auto &f=trees.at(nbt).fields;assert(text(f.at(u"id")+8)==u"minecraft:pig");
++ assert(owner==level);auto &f=trees.at(nbt).fields;assert(text(f.at(u"id")+8)==expected_id);
+  auto pos=f.at(u"Pos"),rot=f.at(u"Rotation"),motion=f.at(u"Motion");assert(trees.at(pos).type==9&&trees.at(rot).type==9&&trees.at(motion).type==9);
+  assert(*(uint8_t *)(rot+0x28)==5&&getq(rot+0x18)-getq(rot+0x10)==16);
+  assert(getq(motion+0x18)-getq(motion+0x10)==24);
+- Pair value=owned(0x400);q(value.object,base+0x1240000);q(value.object+0x150,level);q(value.object+0x1b0,UINT64_C(0xdeadbeef));
++ Pair value=owned(0x400);q(value.object,factory_vtable?factory_vtable:base+0x1240000);q(value.object+0x150,level);q(value.object+0x1b0,UINT64_C(0xdeadbeef));
+  double xyz[]={number(getq(getq(pos+0x10))),number(getq(getq(pos+0x10)+8)),number(getq(getq(pos+0x10)+16))};memcpy((void*)(value.object+0x170),xyz,sizeof xyz);*out=value;
+ }
+ extern "C" unsigned char insert(uintptr_t owner,const Pair *p){assert(owner==level&&p->object&&p->control);++spawn_calls;return insert_ok;}
+@@ -238,6 +240,26 @@
+  insert_ok=0;assert(mc195_world_spawn_entity_ex(&c,&spawn,&init,after_spawn)==-1&&init.calls==4&&memory.empty());insert_ok=1;
+  init.native_calls=spawn_calls+1;init.result=1;init.expire=true;assert(mc195_world_spawn_entity_ex(&c,&spawn,&init,after_spawn)==-1&&init.calls==5&&memory.empty());scope_ok=1;init.expire=false;
+  init.native_calls=spawn_calls+1;init.wrong_level=true;assert(mc195_world_spawn_entity_ex(&c,&spawn,&init,after_spawn)==-1&&init.calls==6&&disposed==before+7&&memory.empty());
++ // SDK mobs retain private vtables. Stock callers keep their original check,
++ // and the exact route refuses stock fallbacks and differently typed clones.
++ auto custom=spawn;custom.id="test:custom_pig";expected_id=u"test:custom_pig";
++ static uintptr_t custom_vtable[2],other_vtable[2];
++ int calls_before=spawn_calls;before=disposed;const int controls_before=destroyed;
++ const uintptr_t exact=(uintptr_t)custom_vtable;
++ assert(mc195_world_spawn_entity_exact(&c,&custom,0)==0);
++ assert(mc195_world_spawn_entity_exact(&c,&custom,exact)==-1&&spawn_calls==calls_before&&memory.empty());
++ factory_vtable=(uintptr_t)other_vtable;
++ assert(mc195_world_spawn_entity_exact(&c,&custom,exact)==-1&&spawn_calls==calls_before&&memory.empty());
++ factory_vtable=exact;
++ assert(mc195_world_spawn_entity(&c,&custom)==-1&&spawn_calls==calls_before&&memory.empty());
++ loaded_ok=0;
++ assert(mc195_world_spawn_entity_exact(&c,&custom,exact)==0&&spawn_calls==calls_before&&memory.empty());
++ loaded_ok=1;insert_ok=0;
++ assert(mc195_world_spawn_entity_exact(&c,&custom,exact)==-1&&spawn_calls==calls_before+1&&memory.empty());
++ insert_ok=1;
++ assert(mc195_world_spawn_entity_exact(&c,&custom,exact)==1&&spawn_calls==calls_before+2&&memory.empty());
++ assert(disposed==before+5&&destroyed==controls_before+5&&trees.empty());
++ factory_vtable=0;expected_id=u"minecraft:pig";
+  // Native defaults can have nonzero metadata: a standing torch is not meta 0.
+  block_object=base+0x1409000;default_state=base+0x140a000;uintptr_t registry=base+0x140b000;
+  q(base+0x140ad68,registry);q(registry,base+0x123e000);q(base+0x123e000,base+0x80020);q(base+0x123e020,base+0x80000);
+--- a/r72-session-candidate/loader/nbt_status_wait_195/navigation.cpp
++++ b/r72-session-candidate/loader/nbt_status_wait_195/navigation.cpp
+@@ -39,11 +39,18 @@
+ // These are navigation entries, not game action IDs. All original section
+ // contents remain in tab_catalog::pages; NBT uses its dedicated page model.
+ constexpr unsigned f3_command=0xfffffffeu;
++#if defined(LCE_OFFLINE_PREVIEW) && defined(LCE_F3_WAYPOINTS) && defined(LCE_WAYPOINT_PACKAGES)
++constexpr unsigned package_waypoint_command=0xfffffffdu;
++#endif
+ const tabs::Entry group0[]={{u"Items & Enchantments",tabs::Kind::action,0},{u"Mobs",tabs::Kind::action,1},
+- {u"F3 server overlay",tabs::Kind::action,f3_command}};
++ {u"F3 server overlay",tabs::Kind::action,f3_command},
++#if defined(LCE_OFFLINE_PREVIEW) && defined(LCE_F3_WAYPOINTS) && defined(LCE_WAYPOINT_PACKAGES)
++ {u"Show package waypoints",tabs::Kind::action,package_waypoint_command},
++#endif
++};
+ const tabs::Entry group1[]={{u"Overlay",tabs::Kind::action,2},{u"Debug Options",tabs::Kind::action,3}};
+ const tabs::Entry group2[]={{u"Self",tabs::Kind::action,8},{u"Create Schematic",tabs::Kind::action,4},{u"Set Camera",tabs::Kind::action,5},{u"Modern Features",tabs::Kind::action,7}};
+-const tabs::Tab groups[]={{u"Lists",group0,3},{u"World",group1,2},{u"Tools",group2,4}};
++const tabs::Tab groups[]={{u"Lists",group0,sizeof(group0)/sizeof(group0[0])},{u"World",group1,2},{u"Tools",group2,4}};
+ const char16_t *fish_color_short(unsigned color) {
+  static const char16_t *names[]={u"White",u"Orng",u"Mgt",u"LBlue",u"Yell",u"Lime",u"Pink",u"Gray",u"LGray",u"Cyan",u"Purpl",u"Blue",u"Brown",u"Green",u"Red"};
+  return color<15?names[color]:u"?";
+@@ -221,7 +228,21 @@
+   tabs::View v{group_,p.selection,p.scroll,visible,page.count,&page};
+   if(!menu_render::snapshot(v,x,y,width,height,gw,gh,p.section==no_section || epoch_!=0,&view))return false;
+   if(group_==0 && p.section==no_section){
+-   for(unsigned i=0;i<view.row_count;++i)if(page.entries[p.scroll+i].command==f3_command){
++   for(unsigned i=0;i<view.row_count;++i){
++    const unsigned command=page.entries[p.scroll+i].command;
++#if defined(LCE_OFFLINE_PREVIEW) && defined(LCE_F3_WAYPOINTS) && defined(LCE_WAYPOINT_PACKAGES)
++    if(command==package_waypoint_command){
++     auto &row=view.rows[i];unsigned mode=mc195_tabs::f3_package_waypoint_mode((unsigned)pad_);
++     row.enabled=mode!=0;
++     const char16_t *label=mode==2?u"Hide package waypoints":u"Show package waypoints";
++     row.length=0;while(label[row.length] && row.length<overlay_probe::kTextUnits){
++      row.text[row.length]=label[row.length];++row.length;
++     }
++     row.text[row.length]=0;
++     continue;
++    }
++#endif
++    if(command!=f3_command)continue;
+     auto &row=view.rows[i];
+ #if defined(MC_LEGACY195)
+     row.enabled=mc195_tabs::f3_available((unsigned)pad_);
+@@ -470,6 +491,12 @@
+ #endif
+    notice_=overlay_probe::FrameNotice::provider_unavailable;return {InputResult::unavailable,{}};
+   }
++#if defined(LCE_OFFLINE_PREVIEW) && defined(LCE_F3_WAYPOINTS) && defined(LCE_WAYPOINT_PACKAGES)
++  if(group_==0 && next==package_waypoint_command){
++   if(mc195_tabs::f3_package_waypoint_toggle((unsigned)pad_))return {InputResult::changed,{}};
++   notice_=overlay_probe::FrameNotice::provider_unavailable;return {InputResult::unavailable,{}};
++  }
++#endif
+   if(next>=tab_catalog::catalog.count || next==6){notice_=overlay_probe::FrameNotice::not_implemented;return {InputResult::unavailable,{}};}
+   p.section=next;p.selection=p.scroll=0;return {InputResult::changed,{}};
+  }

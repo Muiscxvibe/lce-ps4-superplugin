@@ -208,7 +208,7 @@ extern "C" {
 #define B195_RVA_BLOCK_ITEM_VTABLE   0x1218a50u /* 9BlockItem, 57 primary slots */
 #define B195_BLOCK_ITEM_SLOTS        57u
 #define B195_BLOCK_ITEM_SIZE         0xb0u
-#define B195_RVA_ITEM_NAME           0x3af070u  /* Item vt+0x108 name(out, item, stack) */
+#define B195_RVA_ITEM_NAME           0x3af070u  /* Item vt+0x108 name(out, item, const shared_ptr<ItemInstance>&) */
 #define B195_RVA_BLOCK_ITEM_MAP      0x1417788u /* Block* -> BlockItem* map (list-backed) */
 #define B195_RVA_BLOCK_ITEM_MAP_SLOT 0x3af480u  /* Item** operator[](map, Block* const*) */
 #define B195_ITEM_VECTOR_CAP         2398u
@@ -268,7 +268,7 @@ typedef struct b195_natives {
     void (*item_register)(uintptr_t reg, uint32_t id, const void *key, uintptr_t item);
     void (*block_item_ctor)(void *item, uintptr_t block);
     uintptr_t (*map_slot)(uintptr_t map, const uintptr_t *block);
-    void *(*item_name)(void *out, void *item, void *stack);
+    void *(*item_name)(void *out, void *item, const void *shared_stack);
     int *(*fire_slot)(uintptr_t map, const uintptr_t *block);
     void (*sprite_bind)(uintptr_t sprite, uintptr_t texture, uint64_t zero, int x, int y, int w, int h, int flag);
     /* API 1.7 variants and shapes */
@@ -433,13 +433,16 @@ int b195_terrain_detach(b195_module *m);
 
 /* Descriptors for the lead's mapped window / Creative (after items phase). */
 uint32_t b195_mapped_items(const b195_module *m, b195_mapped_item *out, uint32_t cap);
+struct lce_sdk_creative_block_entry;
+int b195_creative_entries(b195_module *m, struct lce_sdk_creative_block_entry *out, uint32_t cap);
+const char *b195_creative_key(b195_module *m, uintptr_t item, uint32_t item_id);
 uint32_t b195_status(const b195_module *m);
 
 /* Private-vtable dispatchers (game ABI). */
 void *b195_block_name_dispatch(void *out, void *block);
 uintptr_t b195_get_resource_dispatch(void *block, uintptr_t state, uintptr_t random, int fortune);
 int b195_resource_count_dispatch(void *block, int fortune, uintptr_t random);
-void *b195_item_name_dispatch(void *out, void *item, void *stack);
+void *b195_item_name_dispatch(void *out, void *item, const void *shared_stack);
 uintptr_t b195_state_from_data_dispatch(void *block, int data);                       /* +0x48, variants */
 uintptr_t b195_face_sprite_dispatch(void *block, uintptr_t face, uintptr_t state);   /* +0x458, variants */
 uintptr_t b195_shape_dispatch(void *block, uintptr_t state, uintptr_t level, uintptr_t pos); /* +0x178, box */

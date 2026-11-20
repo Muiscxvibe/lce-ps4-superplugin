@@ -39,7 +39,32 @@ const SecSpec kSpecs[] = {
     {LCE_SEC_BLCK3, sizeof(lce_pkg_block3), 256},
     {LCE_SEC_BLCK4, sizeof(lce_pkg_block4), 256},
     {LCE_SEC_ITEM3, sizeof(lce_pkg_item3), 512},
+    {LCE_SEC_WAYP, sizeof(lce_pkg_waypoint), LCE_PKG_WAYPOINT_LIMIT},
 };
+
+static_assert(sizeof(lce_pkg_waypoint) == 56, "WAYP wire record size");
+
+bool valid_waypoint(const lce_pkg_waypoint &pin) {
+    auto coordinate = [](int32_t value) {
+        return value >= -LCE_PKG_WAYPOINT_COORD_LIMIT && value <= LCE_PKG_WAYPOINT_COORD_LIMIT;
+    };
+    if (pin.layer >= LCE_PKG_WAYPOINT_LAYERS || pin.reserved || pin.rgb > 0xffffffu ||
+        !coordinate(pin.x) || !coordinate(pin.y) || !coordinate(pin.z) ||
+        !coordinate(pin.end_x) || !coordinate(pin.end_z)) return false;
+    for (uint8_t byte : pin.reserved_tail) if (byte) return false;
+    if (pin.kind == LCE_PKG_WAYPOINT_POINT) {
+        if (pin.x != pin.end_x || pin.z != pin.end_z) return false;
+    } else if (pin.kind != LCE_PKG_WAYPOINT_AREA || pin.x == pin.end_x || pin.z == pin.end_z) {
+        return false;
+    }
+    if (!pin.label[0]) return false;
+    bool ended = false;
+    for (unsigned char byte : pin.label) {
+        if (!byte) ended = true;
+        else if (ended || byte < 32 || byte > 126) return false;
+    }
+    return ended;
+}
 
 const SecSpec *spec_for(uint32_t type) {
     for (const SecSpec &s : kSpecs) if (s.type == type) return &s;
@@ -176,6 +201,7 @@ extern "C" lce_status lce_package_parse(const uint8_t *data, size_t size, lce_pa
         case LCE_SEC_ENTY: v->entities = (const lce_pkg_entity *)body; v->entity_count = s.count; break;
         case LCE_SEC_ORES: v->ores = (const lce_pkg_ore *)body; v->ore_count = s.count; break;
         case LCE_SEC_DEPS: v->deps = (const lce_pkg_dep *)body; v->dep_count = s.count; break;
+        case LCE_SEC_WAYP: v->waypoints = (const lce_pkg_waypoint *)body; v->waypoint_count = s.count; break;
         case LCE_SEC_SCRIPT: v->scripts = (const lce_pkg_script *)body; v->script_count = s.count; break;
         case LCE_SEC_EXT: if (s.size & 3) { set_err(err, cap, "EXT size"); return LCE_E_INVALID; } v->ext = (const uint32_t *)body; v->ext_words = s.size / 4; break;
         case LCE_SEC_ITEM2: v->items2 = (const lce_pkg_item2 *)body; v->item2_count = s.count; break;
@@ -293,6 +319,9 @@ extern "C" lce_status lce_package_parse(const uint8_t *data, size_t size, lce_pa
         if (ok && n) ok = x.boxes_index <= v->arr_words && n <= v->arr_words - x.boxes_index;
         for (uint32_t k = 0; ok && k < n; ++k) ok = !(v->arrs[x.boxes_index + k] >> 30);
         if (!ok) { set_err(err, cap, "invalid BLCK4 record"); return LCE_E_INVALID; }
+    }
+    for (uint32_t i = 0; i < v->waypoint_count; ++i) {
+        if (!valid_waypoint(v->waypoints[i])) { set_err(err, cap, "invalid WAYP record"); return LCE_E_INVALID; }
     }
     uint32_t n = 0;
     if (lce_package_ext_walk(v, nullptr, nullptr, &n) != LCE_OK) { set_err(err, cap, "invalid EXT record"); return LCE_E_INVALID; }

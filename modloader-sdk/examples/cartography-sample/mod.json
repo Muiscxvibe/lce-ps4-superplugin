@@ -1,0 +1,11 @@
+{
+  "id": "cartography_sample",
+  "name": "Cartography Sample",
+  "version": "1.0.0",
+  "target": "CUSA00265-1.95",
+  "waypoints": [
+    {"kind": "point", "layer": 0, "position": [12, 64, -7], "label": "Workshop", "color": "#55ccff"},
+    {"kind": "area", "layer": 0, "position": [24, 64, -2], "end": [36, 8], "label": "Garden", "color": "#44cc88"},
+    {"kind": "point", "layer": 1, "position": [-16, 72, 14], "label": "Portal", "color": "#e3acff"}
+  ]
+}

@@ -18,6 +18,7 @@
 #define DESC_1_11_TAIL
 #endif
 #include "../../../loader/retail195/id_space_195.h"
+#include "../../../integration/sdk_creative_blocks.h"
 #include "../../../tests/check.h"
 
 static const char *IMAGE = "/home/codey/minecraft-ps4-research/private-direct-legacy-capture/legacy-195-analysis.elf";
@@ -164,7 +165,7 @@ static uintptr_t n_map_slot(uintptr_t map, const uintptr_t *block) {
     W(n, U(head)); W(head, n); W(n + 16, *block); W(n + 24, 0); W(map + 16, U(map + 16) + 1);
     return n + 24;
 }
-static void *n_item_name(void *out, void *, void *) { ++f_item_name_orig; return out; }
+static void *n_item_name(void *out, void *, const void *) { ++f_item_name_orig; return out; }
 static std::map<std::pair<uintptr_t, uintptr_t>, int *> g_fire;
 static int *n_fire_slot(uintptr_t map, const uintptr_t *block) { int *&p = g_fire[{map, *block}]; if (!p) p = (int *)arena(4); return p; }
 static void n_sprite_bind(uintptr_t p, uintptr_t tex, uint64_t, int x, int y, int w, int h, int) {
@@ -601,6 +602,14 @@ static void test_block_refusals() {
     }
     CHECK_EQ(g_order.size(), n_order + (M.count - M.dropped));
     CHECK(strstr(M.last_error, "dropped") != nullptr);
+    after_stock_globals(); CHECK_EQ(b195_items_publish(&M), 1);
+    uint32_t creative_count = 0;
+    for (uint32_t i = 0; i < M.count; ++i) {
+        const b195_block &b = M.blocks[i];
+        if (b.dropped) CHECK(b195_creative_key(&M, 0, b.item_id) == nullptr);
+        else creative_count += b.item_id != 0;
+    }
+    CHECK_EQ(b195_creative_entries(&M, nullptr, 0), (int)creative_count);
     // every block fails -> uncertain, nothing registered
     world(); plan();
     CHECK_EQ(configure(1), 1);   // the stone block alone
@@ -658,6 +667,71 @@ static void test_text_oneshot() {
     page[0] = q.after; g_protect_fail = -1; CHECK_EQ(b195_text_restore(&q, &ops), -1); g_protect_fail = 0;
 }
 
+
+static void test_creative_entries() {
+    world(); plan();
+    g_desc[2].variant_count = 16;
+    const lce_plan_block first = g_plan[0];
+    g_plan[0] = g_plan[2];
+    g_plan[2] = first;
+    CHECK_EQ(b195_creative_entries(nullptr, nullptr, 0), 0);
+    CHECK_EQ(configure(), 1);
+    CHECK_EQ(b195_creative_entries(&M, nullptr, 0), 0);
+    CHECK_EQ(b195_creative_entries(&M, nullptr, 1), -1);
+    CHECK_EQ(b195_hook_install(&M), 1);
+    stock_init();
+    CHECK_EQ(b195_creative_entries(&M, nullptr, 0), 0);
+    CHECK(b195_creative_key(&M, 0, 1048) == nullptr);
+    after_stock_globals();
+    CHECK_EQ(b195_items_publish(&M), 1);
+
+    const b195_block &variant = M.blocks[0];
+    const b195_block &plain = M.blocks[1];
+    CHECK_EQ(b195_creative_entries(&M, nullptr, 0), 18);
+    lce_sdk_creative_block_entry rows[19]{};
+    rows[0].aux = 99;
+    rows[18].aux = 99;
+    CHECK_EQ(b195_creative_entries(&M, rows, 17), -1);
+    CHECK_EQ(rows[0].aux, 99u);
+    CHECK_EQ(b195_creative_entries(&M, rows, 18), 18);
+    for (uint32_t i = 0; i < 16; ++i) {
+        CHECK(rows[i].item == variant.item && rows[i].item_id == 1048 && rows[i].aux == i && rows[i].key == variant.desc->key);
+    }
+    CHECK(rows[16].item == plain.item && rows[16].item_id == 1030 && rows[16].aux == 0 && rows[16].key == plain.desc->key);
+    CHECK(rows[17].item == M.blocks[2].item && rows[17].item_id == 254 && rows[17].aux == 0);
+    CHECK_EQ(rows[18].aux, 99u);
+    CHECK(b195_creative_key(&M, variant.item, 1048) == variant.desc->key);
+    CHECK(b195_creative_key(&M, variant.item, 0) == variant.desc->key);
+    CHECK(b195_creative_key(&M, 0, 1048) == variant.desc->key);
+    CHECK(b195_creative_key(&M, variant.item, 1030) == nullptr);
+    CHECK(b195_creative_key(&M, 0, 1049) == nullptr);   // registered no-item block
+    CHECK(b195_creative_key(&M, 0, 0) == nullptr);
+
+    rows[0].aux = 99;
+    g_items[1048] = plain.item;
+    CHECK_EQ(b195_creative_entries(&M, rows, 18), -1);
+    CHECK(b195_creative_key(&M, variant.item, 1048) == nullptr);
+    g_items[1048] = variant.item;
+    const uintptr_t vtable = U(variant.item);
+    W(variant.item, U(plain.item));
+    CHECK_EQ(b195_creative_entries(&M, rows, 18), -1);
+    W(variant.item, vtable);
+    const char *key = g_desc[1].key;
+    g_desc[1].key = variant.desc->key;
+    CHECK_EQ(b195_creative_entries(&M, rows, 18), -1);
+    g_desc[1].key = key;
+    M.blocks[1].item_id = variant.item_id;
+    CHECK_EQ(b195_creative_entries(&M, rows, 18), -1);
+    CHECK(b195_creative_key(&M, variant.item, 1048) == nullptr);
+    M.blocks[1].item_id = 1030;
+    M.blocks[0].variants = 17;
+    CHECK_EQ(b195_creative_entries(&M, rows, 18), -1);
+    M.blocks[0].variants = 16;
+    M.state = B195_UNCERTAIN;
+    CHECK_EQ(b195_creative_entries(&M, rows, 18), -1);
+    CHECK(b195_creative_key(&M, variant.item, 1048) == nullptr);
+    CHECK_EQ(rows[0].aux, 99u);
+}
 
 // The storage-block RTTI trick under the Itanium C++ ABI (__dynamic_cast is libc++abi on the PS4): a module-made
 // __si_class_type_info {si vptr, unique name, &BaseEntityBlock} on a Block-sized object with an EntityBlock vptr at +0x1e8 must make
@@ -829,9 +903,21 @@ static void test_states_shapes() {
     CHECK(a.item_vtable[2 + 0x58 / 8] == B + B195_RVA_MULTI_LEVEL_DATA && b.item_vtable[2 + 0x58 / 8] == B + 0x3aeea0u);
     CHECK_EQ(*(uint8_t *)(a.item + B195_F_ITEM_STACKED), 1); CHECK_EQ(*(uint8_t *)(b.item + B195_F_ITEM_STACKED), 0);
     alignas(16) uint8_t out[0x28] = {}, stack[0xa8] = {};
-    *(int32_t *)(stack + 0x3c) = 1; b195_item_name_dispatch(out, (void *)a.item, stack); CHECK(wout((uintptr_t)out) == "Marble (Black)");
-    *(int32_t *)(stack + 0x3c) = 2; b195_item_name_dispatch(out, (void *)a.item, stack); CHECK(wout((uintptr_t)out) == "Ruby Ore");
-    *(int32_t *)(stack + 0x3c) = 9; b195_item_name_dispatch(out, (void *)a.item, stack); CHECK(wout((uintptr_t)out) == "Ruby Ore");
+    const uintptr_t shared_stack[2] = {(uintptr_t)stack, (uintptr_t)arena(0x18)};
+    const uintptr_t empty_shared_stack[2] = {};
+    auto name = (void *(*)(void *, void *, const void *))U(U(a.item) + 0x108);
+    auto check_name = [&](int32_t aux, const char *expected) {
+        memcpy(stack + B195_F_STACK_AUX, &aux, sizeof aux);
+        CHECK(name(out, (void *)a.item, shared_stack) == out);
+        CHECK(wout((uintptr_t)out) == expected);
+    };
+    check_name(0, "Ruby Ore");
+    check_name(1, "Marble (Black)");
+    check_name(2, "Ruby Ore");   // aux 2 has a texture and no name override
+    check_name(-1, "Ruby Ore");
+    check_name(9, "Ruby Ore");
+    CHECK(name(out, (void *)a.item, empty_shared_stack) == out && wout((uintptr_t)out) == "Ruby Ore");
+    CHECK(name(out, (void *)a.item, nullptr) == out && wout((uintptr_t)out) == "Ruby Ore");
     // terrain: variant sprites come from the module's tiles of the bound generation; variant 0 and unbound -> stock getter
     f_face_orig = 0;
     CHECK(b195_face_sprite_dispatch((void *)a.object, (uintptr_t)dir[1], state_for(a.object, 1)) == g_face_marker);   // not bound yet
@@ -1018,6 +1104,7 @@ int main(int argc, char **argv) {
     test_hook_relro_slot();
     test_block_refusals();
     test_item_refusals();
+    test_creative_entries();
     test_text_oneshot();
     test_storage_rtti();
     b195_test_reset();

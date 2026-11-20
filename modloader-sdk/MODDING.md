@@ -730,7 +730,7 @@ Workshop-compatible globals map onto the same calls: `registerItem`, `registerBl
 - `ItemUse` fires for your **generic** items (the item's private vtable routes `Item::use`).
 - `BlockBreak`/`BlockPlace`/`BlockUse`/`BlockTick`/`BlockNeighbor`/`BlockStepOn`/`BlockEntityInside` fire for your blocks; `InventoryTick` for your items.
 - API 1.3 events are provisional ids until `lce_mod_api.h` lists them; test `capabilities2` (`LCE_CAP2_EV_INVENTORY_TICK`, `_NEIGHBOR`, `_BLOCK_COLLIDE`, `_BLOCK_TICK`) before relying on them.
-- `EntityDamage`/`EntityDeath`/`EntityTick`/`EntityInteract` fire only for entities a mod spawned with `spawn_entity`.
+- `EntityDamage`/`EntityDeath`/`EntityTick`/`EntityInteract` fire for stock entities tracked after a mod's `spawn_entity` call. SDK mob clones retain their own vtables and currently have no tracked-entity callbacks.
 - Entity events run with a level-only frame (the host player's view of the same level), so level and entity services work there; services that need a player refuse.
 - Names are case-sensitive: `server_tick` is an error.
 - **One callback per event**: a second `lce.subscribe` for the same event replaces the first. Dispatch to several handlers yourself, as the generated ports do.
@@ -766,7 +766,7 @@ Native mods can use `lce_tick_pacing_due` from `include/lce_tick_pacing.h` with 
 | `lce.give_item(player, key, n[, aux])` | `give_item` | native `Inventory::add 0x37d4d0`, the GiveItemCommand path; anything that does not fit is dropped at the player's feet (static) |
 | `lce.set_block(level, x, y, z, key[, data])` | `set_block` | r72 `mc195_world_place_block_update` (console-proven Lucky helper), bound in `integration/r72_world_bind195.cpp` |
 | `lce.get_block(level, x, y, z)` | `get_block` | native `getBlockState 0x3f2820` + encoder `0x91bc0` → `id \| meta << 12` (the r72 readback pair) |
-| `lce.spawn_entity(level, key, x, y, z)` | `spawn_entity` | r72 `mc195_world_spawn_entity_ex`; the new entity gets the damage/death routes |
+| `lce.spawn_entity(level, key, x, y, z)` | `spawn_entity` | Uses the native r72 entity factory in an active server frame. A registered SDK mob key requires both its published renderer and the matching r72 spawn helper. |
 | `lce.drop_item(level, x, y, z, key[, n])` | `drop_item` | native `Block::popResource` (static) |
 | `lce.add_effect(entity, {effect=, duration_ticks=, amplifier=})` | `add_effect` | native `MobEffectInstance` + `addEffect` (static) |
 | `lce.play_sound(level, x, y, z, key)` | `play_sound` | `ServerLevel::playSound 0x3f3fe0` with a vanilla name or your sound clone (static) |

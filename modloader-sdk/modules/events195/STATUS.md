@@ -135,7 +135,7 @@ separately (the backend sets the bit after `lce_loader_set_services`).
 
 | Feature | Evidence | Status |
 |---|---|---|
-| `LCE_EV_BLOCK_USE` | Mod block private vtable `+0x2c0` (Block 0x1217e60 / OreBlock 0x1298cf0 stock `0x940b0` = `xor eax,eax; ret`). All 25 interactive blocks checked override it; none of 8 plain blocks do. ABI from `CraftingTableBlock::use` 0x1d4ab0: rsi Level (`+0x248`), rdx BlockPos, rcx BlockState, r8 `shared_ptr<Player>*`, stack word 1 = simulate flag. A nonzero handler result consumes the click | static (`tests/audit.py`) |
+| `LCE_EV_BLOCK_USE` | Private Block vtable `+0x2c0` (plain Block/OreBlock use the false-returning `0x940b0`). Client and server callers pass Block, Level, BlockPos, BlockState, `shared_ptr<Player>*`, hand in `r9d`, three hit floats in `xmm0..2`, then Direction and simulate in stack slots 0 and 1. A handler can consume a server click before the original runs. Simulation always delegates to the original | Retail ABI audited (`tests/audit.py`) and host-tested |
 | Payload context (`level`, `x/y/z`, `hand`, `face`) | Entity position `+0x170` doubles, Level from the thunk arguments | static |
 | `heal` | getHealth `0x4244d0`, setHealth `0x4244f0`, getMaxHealth `0x427e20`, isAlive `0x427240`. Byte pins from r72 `nbt_health_player_195` (console-proven) are checked at init | static |
 | `set_fire` | fire timer int32 `+0x1c0`, clearFire `0x2762a0`, countdown `0x275f41`. Pins from r72 `nbt_fire_player_195`. CAS write; never shortens | static |

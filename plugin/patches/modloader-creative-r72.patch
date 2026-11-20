@@ -1,0 +1,328 @@
+--- a/r72-session-candidate/loader/additive_items_195/creative.cpp
++++ b/r72-session-candidate/loader/additive_items_195/creative.cpp
+@@ -14,28 +14,36 @@
+   (!c->row_tagged[i]||(rd(c,p+0x38,&tag,8)&&tag));
+ }
+ bool group(lce195_additive_creative *c,unsigned n){
+- if(!held(c)||c->group[0]||!c->group[1]||c->group[1]>c->group[2]||c->group[2]>c->group[3]||
++ if(!held(c)||c->group[0])return false;
++ if(!c->group[1])return !n&&!c->group[2]&&!c->group[3];
++ if(c->group[1]>c->group[2]||c->group[2]>c->group[3]||
+     ((c->group[1]|c->group[2]|c->group[3])&7)||c->group[2]-c->group[1]!=n*8u||c->group[3]-c->group[1]>4096*8u)return false;
+  for(unsigned i=0;i<n;i++){uintptr_t p=0;if(!rd(c,c->group[1]+8*i,&p,8)||!entry(c,p,i))return false;}
+  return true;
+ }
+-bool stock(lce195_additive_creative *c){
++bool stock(lce195_additive_creative *c,const lce195_creative_plain_row *rows=nullptr,unsigned row_count=0){
++ const unsigned base_count=c->catalog?c->catalog->count:0;
+  for(unsigned tab=0;tab<12;tab++){
+   uintptr_t h[4]={};if(!rd(c,c->base+0x143d020u+0x20u*tab,h,sizeof h))return false;
+   if(!h[1]&&!h[2]&&!h[3])continue;
+   if(!h[1]||h[1]>h[2]||h[2]>h[3]||((h[1]|h[2]|h[3])&7)||h[3]-h[1]>4096*8u)return false;
+   for(uintptr_t p=h[1];p<h[2];p+=8){
+    uintptr_t wrapper=0,item=0;if(!rd(c,p,&wrapper,8)||!wrapper||!rd(c,wrapper+0x30,&item,8))return false;
+-   for(unsigned j=0;j<c->catalog->count;j++)if(item==c->catalog->entries[j].item)return false;
++   for(unsigned j=0;j<base_count;j++)if(item==c->catalog->entries[j].item)return false;
++   for(unsigned j=0;j<row_count;j++)if(item==rows[j].item)return false;
+   }
+  }
+  return held(c);
+ }
++bool start(lce195_additive_creative *c){
++ if(!c||c->state||!c->base||c->base>UINTPTR_MAX-0x143d200u||!c->held||!c->read)return false;
++ c->state=1;uintptr_t specs=1;
++ if(!rd(c,c->base+0x143d010u,&specs,8)||specs||!stock(c)){c->state=3;return false;}
++ return true;
++}
+ }
+ extern "C" int lce195_creative_build(lce195_additive_creative *c){
+- if(!c||c->state||!c->base||c->base>UINTPTR_MAX-0x143d200u||!c->held||!c->read||!lce195_catalog_count(c->catalog))return 0;
+- c->state=1;uintptr_t specs=1;
+- if(!rd(c,c->base+0x143d010u,&specs,8)||specs||!stock(c)){c->state=3;return 0;}
++ if(!c||!lce195_catalog_count(c->catalog)||!start(c))return 0;
+  for(unsigned i=0;i<c->catalog->count;i++){
+   uintptr_t p=(uintptr_t)c->group;
+   c->row_item[i]=c->catalog->entries[i].item;
+@@ -49,6 +57,45 @@
+   c->count=i+1;
+  }
+  c->state=2;return 1;
++}
++extern "C" int lce195_creative_build_provided(lce195_additive_creative *c){
++ if(!c||c->catalog||c->count||c->group[0]||c->group[1]||c->group[2]||c->group[3]||!start(c))return 0;
++ c->state=2;return 1;
++}
++extern "C" int lce195_creative_append_plain_batch(lce195_additive_creative *c,const lce195_creative_plain_row *rows,unsigned n){
++ if(!c||c->state!=2||!held(c)||(n&&!rows)||c->count>LCE195_CREATIVE_CAPACITY||n>LCE195_CREATIVE_CAPACITY-c->count||!group(c,c->count))return 0;
++ for(unsigned i=0;i<n;i++){
++  if(!rows[i].item||(rows[i].item&7)||rows[i].aux>0x7fffffffU)return 0;
++  for(unsigned j=0;j<c->count;j++)if(c->row_item[j]==rows[i].item&&c->row_aux[j]==rows[i].aux)return 0;
++  for(unsigned j=0;j<i;j++)if(rows[j].item==rows[i].item&&rows[j].aux==rows[i].aux)return 0;
++ }
++ /* Check the stock tabs once for the whole batch on the Creative-init thread. */
++ if(!stock(c,rows,n))return 0;
++ for(unsigned j=0;j<n;j++){
++  unsigned i=c->count;uintptr_t p=(uintptr_t)c->group;
++  c->row_item[i]=rows[j].item;c->row_aux[i]=rows[j].aux;c->row_tagged[i]=0;
++#ifdef LCE195_ADDITIVE_TEST
++  lce195_test_creative_append(&p,rows[j].item,(int)rows[j].aux);
++#else
++  ((void(*)(uintptr_t *,uintptr_t,int))(c->base+0xa336a0u))(&p,rows[j].item,(int)rows[j].aux);
++#endif
++  if(p!=(uintptr_t)c->group||!group(c,i+1)){c->state=4;return -1;}
++  c->count=i+1;
++ }
++ if(n&&!stock(c,rows,n)){c->state=4;return -1;}
++ return 1;
++}
++/* Weak linkage keeps the existing non-SDK plugin build viable. */
++struct sdk_creative_block_entry { uintptr_t item; uint32_t item_id,aux; const char *key; };
++extern "C" int lce_sdk_creative_block_entries(sdk_creative_block_entry *,uint32_t) __attribute__((weak));
++extern "C" int lce195_creative_append_sdk_blocks(lce195_additive_creative *c){
++ if(!lce_sdk_creative_block_entries)return 1;
++ int n=lce_sdk_creative_block_entries(nullptr,0);if(n<0||n>304)return 0;
++ if(!n)return 1;
++ sdk_creative_block_entry entries[304];lce195_creative_plain_row rows[304];
++ if(lce_sdk_creative_block_entries(entries,(uint32_t)n)!=n)return 0;
++ for(int i=0;i<n;i++){if(!entries[i].item_id||!entries[i].key)return 0;rows[i]={entries[i].item,entries[i].aux};}
++ return lce195_creative_append_plain_batch(c,rows,(unsigned)n);
+ }
+ extern "C" int lce195_creative_variant_register(void *context,lce195_creative_variant_provider provider){
+  if(!provider)return 0;
+--- a/r72-session-candidate/loader/additive_items_195/creative.h
++++ b/r72-session-candidate/loader/additive_items_195/creative.h
+@@ -30,9 +30,18 @@
+  * owns all source stack pairs and must retain them through each append. */
+ int lce195_creative_variant_register(void *,lce195_creative_variant_provider);
+ int lce195_creative_variants_append(lce195_additive_creative *);
++typedef struct lce195_creative_plain_row { uintptr_t item; uint32_t aux; } lce195_creative_plain_row;
++/* Validates the entire batch before appending. A negative result means a
++ * native append may have occurred; the Creative image must be discarded. */
++int lce195_creative_append_plain_batch(lce195_additive_creative *,const lce195_creative_plain_row *,unsigned);
++/* SDK bridge: returns 1 for success including no registered SDK blocks. */
++int lce195_creative_append_sdk_blocks(lce195_additive_creative *);
+ int lce195_creative_append_stack(lce195_additive_creative *,const lce195_creative_stack_pair *,uintptr_t expected_item,uint32_t expected_aux);
+ unsigned lce195_creative_count(const lce195_additive_creative *);
+ int lce195_creative_build(lce195_additive_creative *);
++/* Open a fresh private group for rows supplied after the item registry closes.
++ * Requires a null catalog and the same pre-TabSpec and stock checks as build. */
++int lce195_creative_build_provided(lce195_additive_creative *);
+ uintptr_t lce195_creative_wrapper(lce195_additive_creative *,unsigned);
+ unsigned lce195_creative_page(lce195_additive_creative *,unsigned page,uintptr_t out[50]);
+ #ifdef __cplusplus
+--- a/r72-session-candidate/loader/super_content_steel_nbt_save_195/category.cpp
++++ b/r72-session-candidate/loader/super_content_steel_nbt_save_195/category.cpp
+@@ -9,6 +9,7 @@
+  return mc195_lucky_alone()?mc195_lucky_category_count():steel195_tools_runtime_creative_count();
+ }
+ extern "C" uintptr_t mods195_category_image(void){
++ if(steel195_tools_runtime_sdk_creative_only())return mods195_category_status()==3?image:0;
+  const auto *c=mc195_lucky_alone()?mc195_lucky_category_catalog():steel195_tools_runtime_catalog();
+  return c&&mods195_category_status()==3?image:0;
+ }
+--- a/r72-session-candidate/loader/super_content_steel_nbt_save_195/lucky_integration.cpp
++++ b/r72-session-candidate/loader/super_content_steel_nbt_save_195/lucky_integration.cpp
+@@ -103,7 +103,7 @@
+  const auto *catalog=mc195_lucky_category_catalog();
+  if(!mc195_lucky_alone()||creative_state!=1||!catalog)return 0;creative_state=2;phase_tid=(unsigned)tid(nullptr);phase=4;
+  only_creative.base=image;only_creative.catalog=catalog;only_creative.held=creative_held;only_creative.read=readmem;
+- int r=phase_tid?lce195_creative_build(&only_creative):0;if(r==1)r=lce195_creative_variants_append(&only_creative);phase=0;phase_tid=0;creative_state=r==1?3:r<0?5:4;return r;
++ int r=phase_tid?lce195_creative_build(&only_creative):0;if(r==1)r=lce195_creative_variants_append(&only_creative);if(r==1&&lce195_creative_append_sdk_blocks(&only_creative)!=1)r=-1;phase=0;phase_tid=0;creative_state=r==1?3:r<0?5:4;return r;
+ }
+ extern "C" unsigned mc195_lucky_category_status(void){return creative_state;}
+ extern "C" unsigned mc195_lucky_category_count(void){return creative_state==3?lce195_creative_count(&only_creative):0;}
+--- a/r72-session-candidate/loader/super_content_steel_nbt_save_195/registry_trace.cpp
++++ b/r72-session-candidate/loader/super_content_steel_nbt_save_195/registry_trace.cpp
+@@ -28,6 +28,7 @@
+ static lce195_patch_word installed_word[3];
+ static unsigned restore_result[3];
+ extern "C" int steel195_tools_runtime_sdk_only(void);
++extern "C" int steel195_tools_runtime_sdk_creative_only(void);
+ static int restore_protect(void *,void *p,size_t n,int prot){return sceKernelMprotect(p,n,prot);}
+ static void restore_site(unsigned i){if(installed_word[i].word_address)restore_result[i]=(unsigned)(lce195_oneshot_restore(&installed_word[i],5,restore_protect,nullptr)+1);}
+ extern "C" unsigned steel195_trace_restore_status(unsigned i){return i<3?restore_result[i]:0;}
+@@ -139,16 +140,18 @@
+  logline("BEGIN candidate bounded trace\n");
+  if(!attested_base){logline("ABORT no attested base\n");return 0;}
+  base=attested_base;
++ const unsigned site_count=steel195_tools_runtime_sdk_creative_only()?2u:3u;
+  void *pages[3]={};mc195_call_plan plans[3]={};
+- for(unsigned i=0;i<3;i++)if(!prepare(i,&pages[i],&plans[i])){
++ for(unsigned i=0;i<site_count;i++)if(!prepare(i,&pages[i],&plans[i])){
+   for(unsigned j=0;j<i;j++)sceKernelMunmap(pages[j],0x4000);
+   logline("ABORT callsite or near relay guard\n");return 0;
+  }
+  if(scePthreadCreate(&worker,nullptr,flush,nullptr,"lce_startup_trace")){
+-  for(void *p:pages)sceKernelMunmap(p,0x4000);logline("ABORT trace worker\n");return 0;
++  for(unsigned i=0;i<site_count;i++)sceKernelMunmap(pages[i],0x4000);
++  logline("ABORT trace worker\n");return 0;
+  }
+  uintptr_t hooks[3]={(uintptr_t)&items,(uintptr_t)&craft,(uintptr_t)&seed};
+- for(unsigned i=0;i<3;i++){
++ for(unsigned i=0;i<site_count;i++){
+   static const uintptr_t off[3]={0x477cc8,0x477ce8,0xd3d6d8};mc195_call_plan fresh={};
+   if(!steel_trace_plan((steel_trace_site)i,base,(const unsigned char *)(base+off[i]),16,(uintptr_t)pages[i],0x4000,&fresh) ||
+      memcmp(&fresh,&plans[i],sizeof fresh)){
+--- a/r72-session-candidate/loader/super_content_steel_nbt_save_195/super.cpp
++++ b/r72-session-candidate/loader/super_content_steel_nbt_save_195/super.cpp
+@@ -672,7 +672,9 @@
+   int ready=steel195_tools_runtime_prepare(base,0);
+   lucky_items_ready=ready==1&&mc195_custom_items_status()==1&&mc195_custom_items_count()>0;
+   if(ready!=1){logline("ABORT SDK item preparation incomplete or uncertain; resident\n");return 0;}
+-  if(!lucky_items_ready){logline("LCE SDK item preparation refused; SDK items stay off\n");sdk_only=0;}
++  if(!lucky_items_ready&&!steel195_tools_runtime_sdk_creative_only()){
++   logline("LCE SDK item preparation refused; SDK items stay off\n");sdk_only=0;
++  }
+  }else if(lucky_items_configured){
+   int ready=steel195_tools_runtime_prepare(base,0);
+   lucky_items_ready=ready==1&&mc195_custom_items_status()==1&&mc195_custom_items_count()>0;
+@@ -742,13 +744,20 @@
+  }
+  if(lucky_enabled){lucky_custom_base=base;mc195_custom_startup_config custom{base,(uintptr_t)mc195_custom_redstone_neighbor,nullptr,mc195_lucky_candidate_attested,mc195_lucky_candidate_read,mc195_lucky_candidate_thread,lucky_custom_block,lucky_custom_completed};int rc=mc195_custom_startup_prepare(&custom,1);if(rc!=1){content_state("native-lucky-blocks",MC195_CONTENT_FAILED);logline("ABORT Lucky custom BE startup relay unavailable; resident\n");return 0;}}
+  int resource_ready=0;
++ const bool sdk_terrain_requested=sdk_only&&lce_sdk_terrain_wanted();
+  if(sdk_only){
+-  /* Item atlas growth for SDK icons + Creative preparation; no terrain/mapped blocks yet. */
+-  int r=steel195_resource_hooks_start(base);if(r<0){logline("ABORT resource relay publication uncertain; resident\n");return 0;}
+-  if(r==1){resource_ready=1;mc195_growth_relay_mark_ready();}
+-  if(r!=1||steel195_creative_prepare(base)!=1){logline("LCE SDK resource/Creative preparation unavailable; SDK items stay off\n");sdk_only=0;}
+- }
+- if(sdk_only&&resource_ready&&lce_sdk_terrain_wanted()){
++  const bool block_items_only=steel195_tools_runtime_sdk_creative_only()!=0;
++  /* Terrain uses the shared growth relay even with the stock item atlas. */
++  if(!block_items_only||sdk_terrain_requested){
++   int r=steel195_resource_hooks_start(base);
++   if(r<0){logline("ABORT resource relay publication uncertain; resident\n");return 0;}
++   if(r==1){resource_ready=1;mc195_growth_relay_mark_ready();}
++  }
++  if((!block_items_only&&!resource_ready)||steel195_creative_prepare(base)!=1){
++   logline("LCE SDK resource/Creative preparation unavailable; SDK items stay off\n");sdk_only=0;
++  }
++ }
++ if(sdk_only&&resource_ready&&sdk_terrain_requested){
+   /* LCE SDK (gap G1): SDK block faces in the terrain atlas, the same terrain owner and hooks as a Lucky/Steel session. */
+   int terrain=mc195_terrain_install(base,1,0);
+   {char line[64];snprintf(line,sizeof line,"LCE_SDK terrain install=%d\n",terrain);logline(line);}
+--- a/r72-session-candidate/loader/super_content_steel_nbt_save_195/tools_runtime.cpp
++++ b/r72-session-candidate/loader/super_content_steel_nbt_save_195/tools_runtime.cpp
+@@ -15,9 +15,13 @@
+ static int prepared_result,prepare_steel;
+ /* LCE mod loader SDK, W1: run the console-proven item/Creative/atlas pipeline
+  * for the "lce-sdk" provider alone, without the Steel pair or Steel owner. */
+-static int sdk_only;
++static int sdk_only,sdk_creative_only;
++extern "C" int lce_sdk_creative_blocks_wanted(void) __attribute__((weak));
+ extern "C" void steel195_tools_runtime_set_sdk_only(int on){if(!__atomic_load_n(&preparation,__ATOMIC_ACQUIRE))sdk_only=on?1:0;}
+ extern "C" int steel195_tools_runtime_sdk_only(void){return sdk_only;}
++extern "C" int steel195_tools_runtime_sdk_creative_only(void){
++ return __atomic_load_n(&preparation,__ATOMIC_ACQUIRE)==3&&sdk_creative_only;
++}
+ static int owner_ready(void){return sdk_only||steel195_owner_status()==3;}
+ static OrbisPthread preparation_worker;
+ static lce195_items_window default_window;
+@@ -50,7 +54,11 @@
+  if(!b||b>UINTPTR_MAX-0x143d200u||(enabled!=0&&enabled!=1)||
+     !__atomic_compare_exchange_n(&preparation,&zero,1u,false,__ATOMIC_ACQ_REL,__ATOMIC_ACQUIRE))return 0;
+  base=b;prepare_steel=enabled;
+- if(!enabled&&!mc195_custom_items_count()){__atomic_store_n(&preparation,6u,__ATOMIC_RELEASE);return 0;}
++ if(!enabled&&!mc195_custom_items_count()){
++  sdk_creative_only=sdk_only&&lce_sdk_creative_blocks_wanted&&lce_sdk_creative_blocks_wanted();
++  __atomic_store_n(&preparation,sdk_creative_only?3u:6u,__ATOMIC_RELEASE);
++  return sdk_creative_only;
++ }
+  if(scePthreadCreate(&preparation_worker,nullptr,prepare_worker,nullptr,"mc195_steel_reserve")){
+   __atomic_store_n(&preparation,4u,__ATOMIC_RELEASE);return 0;
+  }
+@@ -79,8 +87,13 @@
+  unsigned zero=0;uintptr_t ingot=0,pickaxe=0;
+  if(__atomic_load_n(&preparation,__ATOMIC_ACQUIRE)!=3||!owner_ready()||
+     !__atomic_compare_exchange_n(&registration,&zero,1u,false,__ATOMIC_ACQ_REL,__ATOMIC_ACQUIRE))return 0;
+- if(mc195_mapped_active()){lce195_items_window *mapped=mc195_lucky_window();if(!mapped)return fail_registration(3,0);selected_window=mapped;}
++ if(mc195_mapped_active()){lce195_items_window *mapped=mc195_lucky_window();if(!mapped||sdk_creative_only)return fail_registration(3,0);selected_window=mapped;}
+  else {window.read=read_mem;window.thread_id=tid;if(!lce195_items_window_enter(&window,base,1))return fail_registration(3,0);}
++ if(sdk_creative_only){
++  /* Attest and close the ordinary item window before the SDK publishes BlockItems. */
++  if(!lce195_items_window_leave(&window))return fail_registration(4,-1);
++  __atomic_store_n(&registration,2u,__ATOMIC_RELEASE);return 1;
++ }
+  if(!sdk_only&&!steel195_owner_items(&ingot,&pickaxe))return fail_registration(3,0);
+  const lce195_additive_item pair[2]={
+   {1,sizeof(lce195_additive_item),"steel","steelMod:steelIngot","Steel Ingot","steel_ingot",2268,64,LCE195_MATERIAL,ingot},
+@@ -119,10 +132,10 @@
+  return sdk_only&&__atomic_load_n(&registration,__ATOMIC_ACQUIRE)==2&&publisher.state==2?publisher.base:0;
+ }
+ extern "C" const lce195_item_catalog *steel195_tools_runtime_catalog(void){
+- return __atomic_load_n(&registration,__ATOMIC_ACQUIRE)==2?&catalog:nullptr;
++ return __atomic_load_n(&registration,__ATOMIC_ACQUIRE)==2&&!sdk_creative_only?&catalog:nullptr;
+ }
+ extern "C" int steel195_tools_runtime_identity(void){
+- if(sdk_only)return __atomic_load_n(&registration,__ATOMIC_ACQUIRE)==2&&mc195_custom_items_identity();
++ if(sdk_only)return __atomic_load_n(&registration,__ATOMIC_ACQUIRE)==2&&!sdk_creative_only&&mc195_custom_items_identity();
+  if(__atomic_load_n(&registration,__ATOMIC_ACQUIRE)!=2||names.state!=2||names.count!=4||tool_names.state!=1)return 0;
+  for(unsigned i=0;i<4;i++){
+   lce195_item_vtable_spec s{};uintptr_t actual=0,original[59]{};
+@@ -163,7 +176,10 @@
+  int rc=steel195_extra_crafting(owner,&catalog,nullptr,recipe_held,read_mem,write_mem);recipe_tid=0;
+  __atomic_store_n(&recipe_status,rc==1?2u:rc<0?4u:3u,__ATOMIC_RELEASE);return rc;
+ }
+-static int creative_held(void *){return creative_tid&&tid(nullptr)==creative_tid&&steel195_tools_runtime_identity()&&owner_ready();}
++static int creative_held(void *){
++ return creative_tid&&tid(nullptr)==creative_tid&&owner_ready()&&
++  (sdk_creative_only?__atomic_load_n(&registration,__ATOMIC_ACQUIRE)==2:steel195_tools_runtime_identity());
++}
+ extern "C" int steel195_tools_runtime_creative_prepare(uintptr_t b){
+  unsigned zero=0;
+  return b==base&&__atomic_load_n(&preparation,__ATOMIC_ACQUIRE)==3&&
+@@ -171,13 +187,28 @@
+ }
+ extern "C" int steel195_tools_runtime_creative_build(void){
+  unsigned one=1;
+- if(!steel195_tools_runtime_catalog()||!__atomic_compare_exchange_n(&creative_status,&one,2u,false,__ATOMIC_ACQ_REL,__ATOMIC_ACQUIRE))return 0;
+- creative_tid=(unsigned)tid(nullptr);creative.base=base;creative.catalog=mc195_mapped_active()?&creative_view:&catalog;creative.held=creative_held;creative.read=read_mem;
+- int rc=lce195_creative_build(&creative);if(rc==1)rc=lce195_creative_variants_append(&creative);creative_tid=0;
++ if(__atomic_load_n(&registration,__ATOMIC_ACQUIRE)!=2||
++    !__atomic_compare_exchange_n(&creative_status,&one,2u,false,__ATOMIC_ACQ_REL,__ATOMIC_ACQUIRE))return 0;
++ creative_tid=(unsigned)tid(nullptr);creative.base=base;creative.held=creative_held;creative.read=read_mem;
++ creative.catalog=sdk_creative_only?nullptr:mc195_mapped_active()?&creative_view:&catalog;
++ int rc;
++ if(sdk_creative_only){
++  rc=lce195_creative_build_provided(&creative);
++  if(rc==1)rc=lce195_creative_append_sdk_blocks(&creative);
++  if(rc==1){
++   if(!lce195_creative_count(&creative))rc=0;
++   else if(lce195_creative_variants_append(&creative)!=1)rc=-1;
++  }
++ }else{
++  rc=lce195_creative_build(&creative);
++  if(rc==1)rc=lce195_creative_variants_append(&creative);
++  if(rc==1&&lce195_creative_append_sdk_blocks(&creative)!=1)rc=-1;
++ }
++ creative_tid=0;
+  __atomic_store_n(&creative_status,rc==1?3u:rc<0?5u:4u,__ATOMIC_RELEASE);return rc;
+ }
+ extern "C" const lce195_item_catalog *steel195_tools_runtime_creative_catalog(void){
+- if(__atomic_load_n(&registration,__ATOMIC_ACQUIRE)!=2)return nullptr;return mc195_mapped_active()?&creative_view:&catalog;
++ if(__atomic_load_n(&registration,__ATOMIC_ACQUIRE)!=2||sdk_creative_only)return nullptr;return mc195_mapped_active()?&creative_view:&catalog;
+ }
+ extern "C" unsigned steel195_tools_runtime_creative_status(void){return __atomic_load_n(&creative_status,__ATOMIC_ACQUIRE);}
+ extern "C" unsigned steel195_tools_runtime_creative_count(void){return steel195_tools_runtime_creative_status()==3?lce195_creative_count(&creative):0;}
+@@ -187,7 +218,7 @@
+ }
+ extern "C" void steel195_tools_runtime_snapshot(steel195_tools_runtime_status *out){
+  if(!out)return;out->preparation=__atomic_load_n(&preparation,__ATOMIC_ACQUIRE);out->registration=__atomic_load_n(&registration,__ATOMIC_ACQUIRE);
+- out->names=out->registration==2?2u:0u;out->recipes=__atomic_load_n(&recipe_status,__ATOMIC_ACQUIRE);out->creative=steel195_tools_runtime_creative_status();
++ out->names=out->registration==2&&!sdk_creative_only?2u:0u;out->recipes=__atomic_load_n(&recipe_status,__ATOMIC_ACQUIRE);out->creative=steel195_tools_runtime_creative_status();
+  out->count=out->registration==2?catalog.count:0u;out->icons=__atomic_load_n(&icons,__ATOMIC_ACQUIRE);out->generations=__atomic_load_n(&generations,__ATOMIC_ACQUIRE);
+ }
+ extern "C" int steel195_tools_runtime_ready(void){
+--- a/r72-session-candidate/loader/super_content_steel_nbt_save_195/tools_runtime.h
++++ b/r72-session-candidate/loader/super_content_steel_nbt_save_195/tools_runtime.h
+@@ -10,6 +10,8 @@
+ /* One immutable next-launch Steel choice. The reservation is prepared on a
+  * separate joined worker before any native initializer hook is published. */
+ int steel195_tools_runtime_prepare(uintptr_t,int);
++/* SDK startup with a BlockItem plan and no additive item atlas owner. */
++int steel195_tools_runtime_sdk_creative_only(void);
+ int steel195_tools_runtime_after_items(void);
+ int steel195_tools_runtime_crafting(uintptr_t);
+ const lce195_item_catalog *steel195_tools_runtime_catalog(void);

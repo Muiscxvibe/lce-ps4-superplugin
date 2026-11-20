@@ -25,7 +25,7 @@ MODID_RE = re.compile(r'^[a-z0-9_]{2,31}$')
 KEY_RE = re.compile(r'^[a-z0-9_]{2,31}:[a-z0-9_./#-]+$')
 RESERVED_IDS = {'minecraft', 'packs', 'lce', 'reservations', 'worlds', 'downloads', 'maps', 'updates', 'cache', 'staged'}
 
-SEC = dict(STRS=1, META=2, TEX=3, DATA=4, ITEM=5, BLCK=6, RCPE=7, SMLT=8, TABS=9, LANG=10, ENTY=11, ORES=12, DEPS=13, SCRIPT=14, EXT=15, ARRS=16, ITEM2=17, BLCK2=18, BLCK3=19, ITEM3=20, BLCK4=21)
+SEC = dict(STRS=1, META=2, TEX=3, DATA=4, ITEM=5, BLCK=6, RCPE=7, SMLT=8, TABS=9, LANG=10, ENTY=11, ORES=12, DEPS=13, SCRIPT=14, EXT=15, ARRS=16, ITEM2=17, BLCK2=18, BLCK3=19, ITEM3=20, BLCK4=21, WAYP=22)
 import lce_ext_schema as XS
 ATLASES = {'items': (0, [(16, 16)]), 'terrain': (1, [(16, 16)]), 'armor': (2, [(64, 32)]), 'entity': (3, [(64, 32), (64, 64)]), 'icon': (4, [(16, 16)])}
 ITEM_KINDS = ['generic', 'food', 'sword', 'pickaxe', 'axe', 'shovel', 'hoe', 'helmet', 'chestplate', 'leggings', 'boots']
@@ -229,6 +229,54 @@ def render_config(entries, modid=''):
     if len(text.encode()) > CONFIG_MAX_FILE:
         raise PackError(f'config: generated file is {len(text.encode())} bytes (> {CONFIG_MAX_FILE}); shorten the comments')
     return text
+
+
+WAYPOINT_LIMIT = 16
+WAYPOINT_COORD_LIMIT = 30_000_000
+WAYPOINT_RECORD = '<BBH5iI25s3x'
+
+
+def validate_waypoints(value, err):
+    if not isinstance(value, list) or len(value) > WAYPOINT_LIMIT:
+        err(f'waypoints: expected an array with at most {WAYPOINT_LIMIT} entries')
+        return []
+
+    def position(value, size):
+        return (isinstance(value, list) and len(value) == size and
+                all(type(c) is int and -WAYPOINT_COORD_LIMIT <= c <= WAYPOINT_COORD_LIMIT for c in value))
+
+    pins = []
+    for index, pin in enumerate(value):
+        name = f'waypoints[{index}]'
+        if not isinstance(pin, dict) or set(pin) - {'kind', 'layer', 'position', 'end', 'label', 'color'}:
+            err(f'{name}: expected an authored waypoint object')
+            continue
+        kind, layer = pin.get('kind', 'point'), pin.get('layer')
+        label, color = pin.get('label'), pin.get('color', '#55ccff')
+        xyz, end = pin.get('position'), pin.get('end')
+        if kind not in ('point', 'area') or type(layer) is not int or not 0 <= layer < 3:
+            err(f'{name}: kind must be point or area, and layer must be 0..2')
+            continue
+        if not position(xyz, 3):
+            err(f'{name}: position needs three integer coordinates in ±{WAYPOINT_COORD_LIMIT}')
+            continue
+        if kind == 'area':
+            if not position(end, 2) or xyz[0] == end[0] or xyz[2] == end[1]:
+                err(f'{name}: an area needs a nondegenerate opposite [x, z] corner')
+                continue
+        elif 'end' in pin:
+            err(f'{name}: end is accepted only for an area')
+            continue
+        else:
+            end = [xyz[0], xyz[2]]
+        if not isinstance(label, str) or not re.fullmatch(r'[ -~]{1,24}', label):
+            err(f'{name}: label must be 1..24 printable ASCII characters')
+            continue
+        if not isinstance(color, str) or not re.fullmatch(r'#[0-9a-fA-F]{6}', color):
+            err(f'{name}: color must be a #RRGGBB string')
+            continue
+        pins.append((1 if kind == 'point' else 2, layer, 0, *xyz, *end, int(color[1:], 16), label.encode('ascii')))
+    return pins
 
 
 def validate(m, srcdir, resize=False):
@@ -627,6 +675,7 @@ def validate(m, srcdir, resize=False):
         scripts.append((name, src))
 
     config = validate_config(m.get('config'), err)
+    waypoints = validate_waypoints(m.get('waypoints', []), err)
 
     for name, lst in (('textures', textures), ('items', items), ('blocks', blocks), ('recipes', recipes), ('smelting', smelts), ('tabs', tabs), ('lang', lang), ('deps', deps)):
         if len(lst) > LIMITS[name]:
@@ -634,7 +683,7 @@ def validate(m, srcdir, resize=False):
     if errs:
         raise PackError('\n'.join(errs))
     return dict(meta=m, textures=textures, items=items, blocks=blocks, recipes=recipes, smelts=smelts, tabs=tabs, lang=lang, deps=deps,
-                ext=ext, scripts=scripts, config=config)
+                ext=ext, scripts=scripts, config=config, waypoints=waypoints)
 
 
 
@@ -909,8 +958,10 @@ def encode(n):
     secs['DATA'] = (bytes(blob), 0)
     secs['EXT'] = (struct.pack(f'<{len(ext_words)}I', *ext_words), 0)
     secs['ARRS'] = (struct.pack(f'<{len(arrs)}I', *arrs), 0)
+    waypoints = n.get('waypoints', [])
+    secs['WAYP'] = (b''.join(struct.pack(WAYPOINT_RECORD, *pin) for pin in waypoints), len(waypoints))
     secs['STRS'] = (bytes(S.buf), 0)
-    order = ['STRS', 'META', 'TEX', 'DATA', 'ITEM', 'BLCK', 'RCPE', 'SMLT', 'TABS', 'LANG', 'DEPS', 'SCRIPT', 'EXT', 'ARRS', 'ITEM2', 'BLCK2', 'BLCK3', 'ITEM3', 'BLCK4']
+    order = ['STRS', 'META', 'TEX', 'DATA', 'ITEM', 'BLCK', 'RCPE', 'SMLT', 'TABS', 'LANG', 'DEPS', 'SCRIPT', 'EXT', 'ARRS', 'ITEM2', 'BLCK2', 'BLCK3', 'ITEM3', 'BLCK4', 'WAYP']
     order = [o for o in order if o in ('STRS', 'META') or secs[o][0]]
     table_end = 64 + 16 * len(order)
     body = bytearray()
@@ -986,6 +1037,14 @@ def decode(data):
     out['lang'] = [dict(locale=s(r[0]), key=s(r[1]), value=s(r[2])) for r in recs('LANG', '<3I')]
     out['dependencies'] = {s(r[0]): s(r[1]) for r in recs('DEPS', '<2I')}
     out['scripts'] = [dict(name=s(r[0]), bytes=r[2]) for r in recs('SCRIPT', '<3I')]
+    if SEC['WAYP'] in secs:
+        out['waypoints'] = []
+        for kind, layer, _, x, y, z, end_x, end_z, color, label in recs('WAYP', WAYPOINT_RECORD):
+            marker = dict(kind='point' if kind == 1 else 'area', layer=layer, position=[x, y, z],
+                          label=label.split(b'\0', 1)[0].decode('ascii'), color=f'#{color:06x}')
+            if kind == 2:
+                marker['end'] = [end_x, end_z]
+            out['waypoints'].append(marker)
     if SEC['EXT'] in secs:  # API 1.1 content: list keys per section
         off, sz, _ = secs[SEC['EXT']]
         words = struct.unpack_from(f'<{sz // 4}I', data, off)

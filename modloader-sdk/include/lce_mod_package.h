@@ -56,6 +56,7 @@ enum {
     LCE_SEC_BLCK2 = 18, /* lce_pkg_block2[], parallel to BLCK */
     LCE_SEC_BLCK3 = 19, /* lce_pkg_block3[], parallel to BLCK: API 1.7 */
     LCE_SEC_BLCK4 = 21, /* lce_pkg_block4[], parallel to BLCK: API 1.11 multi-box shapes (written only when a block is BOXES) */
+    LCE_SEC_WAYP = 22, /* lce_pkg_waypoint[], offline point and area overlays */
     LCE_SEC_ITEM3 = 20  /* lce_pkg_item3[], parallel to ITEM: API 1.9 throwables, API 1.10 boat type (written only when an item is THROWABLE or BOAT) */
 };
 
@@ -80,6 +81,22 @@ typedef struct {
 } lce_pkg_meta;              /* 28 */
 
 typedef struct { lce_pkg_str modid; lce_pkg_str min_version; } lce_pkg_dep; /* 8 */
+
+#define LCE_PKG_WAYPOINT_LIMIT 16u
+#define LCE_PKG_WAYPOINT_LABEL_CAPACITY 25u
+#define LCE_PKG_WAYPOINT_LAYERS 3u
+#define LCE_PKG_WAYPOINT_COORD_LIMIT 30000000
+
+enum { LCE_PKG_WAYPOINT_POINT = 1, LCE_PKG_WAYPOINT_AREA = 2 };
+
+typedef struct {
+    uint8_t kind, layer;    /* layer: retained server level-array index, 0..2 */
+    uint16_t reserved;
+    int32_t x, y, z, end_x, end_z;
+    uint32_t rgb;
+    char label[LCE_PKG_WAYPOINT_LABEL_CAPACITY];
+    uint8_t reserved_tail[3];
+} lce_pkg_waypoint;         /* 56 bytes */
 
 typedef struct {
     lce_pkg_str key;

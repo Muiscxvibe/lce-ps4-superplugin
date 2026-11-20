@@ -16,6 +16,8 @@ python3 tools/gen_vanilla.py >/dev/null
 flags=(--target=x86_64-pc-freebsd12-elf -fPIC -mstackrealign -funwind-tables -fno-stack-protector -O2 -ffreestanding -fno-builtin
        -isysroot "$tc" -isystem "$tc/include" -DMC_LEGACY195)
 if [[ ${LCE_EXPERIMENTAL_FUEL:-0} == 1 ]]; then flags+=(-DLCE_EXPERIMENTAL_FUEL); fi
+if [[ ${LCE_EXPERIMENTAL_VIEWPORT_TINT:-0} == 1 ]]; then flags+=(-DLCE_EXPERIMENTAL_VIEWPORT_TINT); fi
+if [[ ${LCE_WAYPOINT_PACKAGES:-0} == 1 ]]; then flags+=(-DLCE_WAYPOINT_PACKAGES); fi
 cxx=(-std=c++17 -fvisibility=hidden -fno-exceptions -fno-rtti -Wall -Wextra -Werror -Wno-unused-function)
 # events195 thunks must let a native game exception unwind through their frame guard (modules/events195/STATUS.md)
 cxx_eh=(-std=c++17 -fvisibility=hidden -fexceptions -fno-rtti -Wall -Wextra -Werror)

@@ -1356,6 +1356,10 @@ void run_mods(lce_loader *l) {
         ModRec &m = l->mods[i];
         if (m.rep.state != LCE_MOD_DISCOVERED) continue;
         if (m.has_pkg) {
+            if (m.view.waypoint_count && !(l->cfg.flags & LCE_LOADER_WAYPOINT_PACKAGES)) {
+                reject(l, m, LCE_MOD_REJECTED, LCE_E_UNSUPPORTED, "package waypoints unavailable");
+                continue;
+            }
             m.accepting = true;
             lce_status st = lce_package_register(&m.view, &l->api, &m.ctx, err, sizeof err);
             // Packaged scripts (LCE_SEC_SCRIPT) run in the same REGISTER window, so
@@ -1505,6 +1509,22 @@ extern "C" const lce_mod_report *lce_loader_mod(const lce_loader *l, uint32_t i)
 extern "C" const lce_plan *lce_loader_plan(const lce_loader *l) { return l && l->plan_ready ? &l->plan : nullptr; }
 extern "C" const lce_ledger *lce_loader_ledger(const lce_loader *l) { return l ? &l->ledger : nullptr; }
 extern "C" const lce_api *lce_loader_api(const lce_loader *l) { return l ? &l->api : nullptr; }
+
+extern "C" uint32_t lce_loader_waypoints(const lce_loader *l, uint32_t layer, lce_pkg_waypoint *out, uint32_t cap) {
+    if (!l || l->phase != LCE_PHASE_RUNNING || layer >= LCE_PKG_WAYPOINT_LAYERS || (!out && cap)) return 0;
+    uint32_t count = 0;
+    for (uint32_t i = 0; i < l->mod_count; ++i) {
+        const ModRec &m = l->mods[i];
+        if (m.rep.state != LCE_MOD_LIVE || !m.has_pkg) continue;
+        for (uint32_t j = 0; j < m.view.waypoint_count; ++j) {
+            const lce_pkg_waypoint &pin = m.view.waypoints[j];
+            if (pin.layer != layer) continue;
+            if (count < cap) out[count] = pin;
+            ++count;
+        }
+    }
+    return count;
+}
 
 extern "C" uint32_t lce_loader_scripts(const lce_loader *l, uint32_t i, lce_mod_script *out, uint32_t cap) {
     if (!l || i >= l->mod_count || !l->mods[i].has_pkg || !out) return 0;

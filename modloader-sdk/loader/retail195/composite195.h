@@ -121,6 +121,7 @@ typedef struct lce195c {
     uint32_t state;                          /* 0 idle, 1 prepared, 2 armed, 3 failed */
     uint8_t phase[LCE195C_PH_COUNT];
     uint32_t items_window;                   /* 1 while lce195c_phase_after_items runs (blocks items_held) */
+    uint32_t block_items_publication;        /* 0 pending, 1 complete, 2 failed. Creative readers acquire this. */
     uint64_t items_thread;
     uint32_t late_held;                      /* 1 while lce195c_phase_late runs */
     uint32_t world_entry;                    /* 1 allowed (default), 0 blocked */
@@ -159,6 +160,9 @@ void lce195c_attach(lce195c *c, lce_loader *l);
 /* ---- phase dispatcher (see the table above) ---- */
 int lce195c_phase_blocks_hook(lce195c *c);      /* 1 armed / nothing, 0 retry later (registry not built) or refused, -1 */
 int lce195c_phase_after_items(lce195c *c);      /* startup thread, after the item window */
+int lce195c_creative_blocks_wanted(const lce195c *c);
+int lce195c_creative_block_entries(const lce195c *c, struct lce_sdk_creative_block_entry *out, uint32_t capacity);
+const char *lce195c_creative_block_key(const lce195c *c, uintptr_t item, uint32_t item_id);
 int lce195c_phase_late(lce195c *c);             /* main thread at the title, no Level; runs once */
 int lce195c_world_entry_allowed(const lce195c *c);
 uint32_t lce195c_phase_state(const lce195c *c, uint32_t phase);

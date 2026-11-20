@@ -132,13 +132,49 @@ clang "${flags[@]}" -std=c11 -Wall -Wextra -Werror -I$crash -c $crash/logger.cra
 clang++ "${flags[@]}" "${cxx[@]}" -I"$debug" -I"$transport" "${debug_diag[@]}" -DMC_COOPERATIVE_TABS -Dplugin_load=mc195_debug_load -Dplugin_unload=mc195_debug_unload -Dmodule_start=mc195_debug_module_start -Dmodule_stop=mc195_debug_module_stop -Dg_pluginName=mc195_debug_name -Dg_pluginDesc=mc195_debug_desc -Dg_pluginAuth=mc195_debug_auth -Dg_pluginVersion=mc195_debug_version -c $crash/debug_main.item_diag.cpp -o $crash/build/debug_main.o
 # Rebuild the current NBT presenter rather than using a stale object.
 clang++ "${flags[@]}" "${cxx[@]}" -Wno-missing-field-initializers "${debug_diag[@]}" -I"$root/shader-re/opengnm/include" -c "$root/menu-render-bridge/nuklear_presenter.cpp" -o "$crash/build/tabs_114.o"
+lcesdk=${LCE_SDK_ROOT:-/home/codey/minecraft-lce-work/modloader-sdk}
+viewport_flags=()
+waypoint_objects=()
+if [[ ${LCE_EXPERIMENTAL_VIEWPORT_TINT:-0} == 1 ]]; then
+  export LCE_EXPERIMENTAL_VIEWPORT_TINT
+  viewport_flags+=(-DLCE_EXPERIMENTAL_VIEWPORT_TINT)
+fi
+if [[ ${LCE_F3_WAYPOINTS:-0} == 1 ]]; then
+  [[ ${LCE_OFFLINE_PREVIEW:-0} == 1 ]] || { echo "LCE_F3_WAYPOINTS=1 requires LCE_OFFLINE_PREVIEW=1" >&2; exit 1; }
+  waypoint_root=${LCE_WAYPOINTS_ROOT:?Set LCE_WAYPOINTS_ROOT to the waypoint source directory}
+  viewport_flags+=(-DLCE_F3_WAYPOINTS=1 -I"$waypoint_root/include" -I"$waypoint_root/integration" -I"$root/loader/f3_server_195")
+  mkdir -p "$crash/build/waypoints"
+  waypoint_objects=("$crash/build/waypoints/model.o" "$crash/build/waypoints/draw.o")
+  clang "${flags[@]}" -std=c99 -Wall -Wextra -Werror -I"$waypoint_root/include" \
+    -c "$waypoint_root/src/lce_waypoints.c" -o "${waypoint_objects[0]}"
+  clang++ "${flags[@]}" "${cxx[@]}" "${viewport_flags[@]}" \
+    -I"$root/shader-re/opengnm/include" \
+    -c "$waypoint_root/integration/f3_waypoint_draw.cpp" -o "${waypoint_objects[1]}"
+fi
+if [[ ${LCE_WAYPOINT_PACKAGES:-0} == 1 ]]; then
+  [[ ${LCE_F3_WAYPOINTS:-0} == 1 ]] || { echo "LCE_WAYPOINT_PACKAGES=1 requires LCE_F3_WAYPOINTS=1" >&2; exit 1; }
+  export LCE_WAYPOINT_PACKAGES
+  viewport_flags+=(-DLCE_WAYPOINT_PACKAGES=1 -I"$waypoint_root/activation")
+  waypoint_objects+=("$crash/build/waypoints/packages.o")
+  clang++ "${flags[@]}" "${cxx[@]}" "${viewport_flags[@]}" -include "$PWD/abi_guard.hpp" \
+    -I"$root/shader-re/opengnm/include" -I"$lcesdk/include" \
+    -c "$waypoint_root/activation/f3_package_waypoints.cpp" -o "$crash/build/waypoints/packages.o"
+fi
 [ -f $crash/tabs_29.orig.keep ] || cp $crash/build/tabs_29.o $crash/tabs_29.orig.keep
+nav_catalog_input="$crash/tabs_29.orig.keep"
+if [[ ${LCE_WAYPOINT_PACKAGES:-0} == 1 ]]; then
+  nav_catalog_input="$crash/build/waypoints/navigation.o"
+  clang++ "${flags[@]}" "${cxx[@]}" "${debug_diag[@]}" "${viewport_flags[@]}" -include "$PWD/abi_guard.hpp" \
+    -Wno-missing-field-initializers -I"$root/native-debug-plugin" -I"$root/nbt-dropped-item" \
+    -I"$root/menu-render-bridge/gnm-submit" -I"$root/shader-re/opengnm/include" -I"$lcesdk/include" \
+    -c "$root/loader/nbt_status_wait_195/navigation.cpp" -o "$nav_catalog_input"
+fi
 # Debug menu catalogue: give the "(unavailable)" rows the server / plugin can serve real
 # command ids, re-encode baby / villager rows (patch_debug_catalog.py checks every row first).
-python3 $crash/patch_debug_catalog.py $crash/tabs_29.orig.keep $crash/build/tabs29_catalog.obj
+python3 "$crash/patch_debug_catalog.py" "$nav_catalog_input" "$crash/build/tabs29_catalog.obj"
 # remote_actions.cpp (debug_all.hpp) reads the trade-level page state from Navigation; refuse
-# to build if the prebuilt object's layout moved.
-nav_dis=$(objdump -d --no-show-raw-insn $crash/tabs_29.orig.keep)
+# to build if the Navigation layout moved.
+nav_dis=$(objdump -d --no-show-raw-insn "$nav_catalog_input")
 for pattern in 'lea    0x3210(%rax),%rdi' 'cmpb   $0x0,0x3340(%rax)' 'cmpb   $0x0,0x3341(%rax)' 'mov    0x3338(%rax),%ecx' 'mov    0x333c(%rax),%eax' 'cmpb   $0x0,0x60(%rdi)'; do
  grep -qF -- "$pattern" <<<"$nav_dis" || { echo "tabs_29.o Navigation layout changed (pattern $pattern); update debug_all.hpp kNav* offsets" >&2; exit 1; }
 done
@@ -146,9 +182,23 @@ objcopy --add-symbol lce_body_submit_sheep=.text._ZN11tab_actions10Dispatcher12s
 # LCE mod loader SDK (modloader-sdk/integration/shipping-plugin.patch, INTEGRATION.md).
 # 1. Rebuild the r72 translation units this patch changes, with the flags above.
 #    The prebuilt objects are kept once as *.pre-sdk.keep (rollback: copy them back).
-lcesdk=/home/codey/minecraft-lce-work/modloader-sdk
+for entry in "debug_tabs_viewport_195/multi_bootstrap.cpp:tabs_view_multi_bootstrap" \
+             "debug_tabs_view_diagnostics_195/bindings.cpp:tabs_view_bindings" \
+             "f3_server_195/hud.cpp:lucky_f3_hud"; do
+  clang++ "${flags[@]}" "${cxx[@]}" "${debug_diag[@]}" "${viewport_flags[@]}" \
+    -Wno-missing-field-initializers -include "$PWD/abi_guard.hpp" -I"$root/native-debug-plugin" \
+    -I"$root/menu-render-bridge/gnm-submit" -I"$root/shader-re/opengnm/include" -I"$lcesdk/include" \
+    -c "$root/loader/${entry%:*}" -o "$crash/build/${entry#*:}.o"
+done
+if (( ${#waypoint_objects[@]} )); then
+  ld.lld -r "$crash/build/lucky_f3_hud.o" "${waypoint_objects[@]}" -o "$crash/build/waypoints/hud.o"
+  mv "$crash/build/waypoints/hud.o" "$crash/build/lucky_f3_hud.o"
+fi
+# The SDK and the stock r72 world services share one native entity adapter.
+clang++ "${flags[@]}" "${cxx[@]}" -fexceptions \
+  -c "$root/loader/lucky_block_world_events_195/entity.cpp" -o "$crash/build/lucky_world_entity.o"
 s195="$root/loader/super_content_steel_nbt_save_195"
-for o in super trace tools_runtime process_resource content_process content_craft_hook craft_provider/integration_provider_capture craft_provider/modded-crafting-candidate; do
+for o in super trace tools_runtime process_resource content_process content_craft_hook creative_mods_category tools_generic_creative lucky_integration craft_provider/integration_provider_capture craft_provider/modded-crafting-candidate; do
  [ -f "$crash/build/$o.o.pre-sdk.keep" ] || cp "$crash/build/$o.o" "$crash/build/$o.o.pre-sdk.keep"
 done
 clang++ "${flags[@]}" "${cxx[@]}" -c "$s195/super.cpp" -o "$crash/build/super.o"
@@ -162,6 +212,9 @@ done
 clang++ "${flags[@]}" "${cxx[@]}" -fexceptions -c "$root/loader/shared_server_scope_195/mux.cpp" -o "$crash/build/nbt_lifecycle_shared_scope_mux.o"   # shared scope capacity 8 (room for the LCE SDK)
 clang++ "${flags[@]}" "${cxx[@]}" -I"$root/loader/steel_startup_trace_195" -DSTEEL_TRACE_COMPONENT -c "$s195/registry_trace.cpp" -o "$crash/build/trace.o"
 clang++ "${flags[@]}" "${cxx[@]}" -I"$root/compatibility/ruby/vendor/lua-5.4.8/src" -c "$s195/tools_runtime.cpp" -o "$crash/build/tools_runtime.o"
+clang++ "${flags[@]}" "${cxx[@]}" -c "$s195/category.cpp" -o "$crash/build/creative_mods_category.o"
+clang++ "${flags[@]}" "${cxx[@]}" -c "$root/loader/additive_items_195/creative.cpp" -o "$crash/build/tools_generic_creative.o"
+clang++ "${flags[@]}" "${cxx[@]}" -c "$s195/lucky_integration.cpp" -o "$crash/build/lucky_integration.o"
 clang++ "${flags[@]}" "${cxx[@]}" -I"$root/compatibility/ruby/vendor/lua-5.4.8/src" -Dsteel195_resource_grow=mc195_items_resource_grow -c "$s195/resource.cpp" -o "$crash/build/process_resource.o"
 clang++ "${flags[@]}" "${cxx[@]}" -c "$s195/content_process.cpp" -o "$crash/build/content_process.o"
 clang++ "${flags[@]}" "${cxx[@]}" -c "$root/loader/steel_process_content_195/craft_hook.cpp" -o "$crash/build/content_craft_hook.o"
@@ -177,6 +230,6 @@ if [[ -z ${LCE_SDK_OBJECT:-} ]]; then
   "$lcesdk/build-ps4.sh" >/dev/null
   LCE_SDK_OBJECT="$lcesdk/build/ps4/lcemodloader.o"
 fi
-ld.lld --wrap=mc195_verify_pristine_rx --wrap=mods195_category_status --wrap=mods195_category_count --wrap=mods195_category_wrapper --wrap=lce_sdk_boot --wrap=mc195_craft_select_embedded --wrap=mc195_craft_filter_decide --wrap=steel195_creative_hook_start --wrap=steel195_craft_hook_start --wrap=steel195_resource_hooks_start --wrap=steel195_retirement_hook_start --wrap=mc195_ore_probe_hook_start --wrap=mc195_lucky_hook_start --wrap=mc195_steel_ore_prepare --wrap=steel195_ore_block_hook_start --wrap=mc195_craft_candidate_start --wrap=mc195_lucky_prepare --wrap=mc195_terrain_install --wrap=mc195_giant_texture_install --wrap=mc195_rainbow_install --wrap=mc195_lucky_chat_colour_install --wrap=mods195_private_movie_start --wrap=mods195_nav_start --wrap=mc195_custom_startup_prepare --wrap=mc195_lucky_native_prepare --wrap=_ZN9tab_modal10Navigation4pollEv --wrap=mc195_mods_pad_sample_data --wrap=_Z13mc195_f3_bindP21mc195_natural_process --wrap=_ZN9tab_modal10Navigation5beginEiiiihhPNS_5FrameE --wrap=_ZN9tab_modal10Navigation10invalidateEv --wrap=_ZN11menu_render16NuklearPresenter5startERN9tab_modal10NavigationERKNS_11DirectLeaseEiiiihhPNS_13DirectFrameIdE --wrap=lce_remote_inbound_frame --wrap=lce_remote_pump --wrap=lce_plugin_update_tick --wrap=_ZN12mc195_f3_hud9availableEjb --wrap=_ZN12mc195_f3_hud7enabledEj --wrap=_ZN12mc195_f3_hud5stateEj --wrap=_ZN12mc195_f3_hud6toggleEjb --wrap=_ZN12mc195_f3_hud4tickEj --wrap=_ZN12mc195_f3_hud6renderEjRN11menu_render16PostUiCompositorEPv --wrap=_ZN12mc195_f3_hud10invalidateEj -m elf_x86_64 -pie --wrap=mc195_gre_set_skin_enabled --wrap=mc195_selection_worker_startup_choice --wrap=_ZN9tab_modal10Navigation5inputEiNS_3KeyEbb --wrap=mc195_debug_action_available --wrap=_ZN10mc195_mods5Model4openEv --wrap=_ZN10mc195_mods5Model7refreshEv --wrap=_ZN10mc195_mods5Model5inputEN9tab_modal3KeyEb --wrap=_ZN10mc195_mods5Model4drawERKN11menu_render10DirectSinkEiiiihh --wrap=_ZN9tab_modal10Navigation30configure_visual_world_actionsERKN11tab_actions14WeatherBackendE --version-script "$debug/exports.map" --script "$tc/link.x" -e _init --eh-frame-hdr -L "$tc/lib" $crash/build/crtprx.o $crash/build/super.o $crash/build/frontend_diagnostics.o $crash/build/frontend_crash_logger.o $crash/build/debug_main.o $crash/build/native_pad.o $crash/build/weather.o $crash/build/runtime.o $crash/build/action_trace.o $crash/build/runtime_attest.o $crash/build/shared_tick_195.o $crash/build/dialog_gate_195.o $crash/build/title_detour.o $crash/build/ps4_attest.o $crash/build/store_bridge.o $crash/build/probe.o $crash/build/menu_action.o $crash/build/menu_label.o $crash/build/title_branch.o $crash/build/title_thunk.o $crash/build/offline_observe.o $crash/build/offline_observe_asm.o $crash/build/offline_once_component.o $crash/build/offline_prearm.o $crash/build/offline_repeat.o $crash/build/trace.o $crash/build/registry_component.o $crash/build/trace_*.o $crash/build/store_route.o $crash/build/label_adapter.o $crash/build/catalog_bridge.o $crash/build/catalog_builtin.o $crash/build/catalog_snapshot.o $crash/build/catalog.o $crash/build/selection_selection.o $crash/build/selection_store.o $crash/build/selection_worker.o $crash/build/local_store_ps4.o $crash/build/manifest.o $crash/build/legacy_*.o $crash/build/steel_*.o $crash/build/process_*.o $crash/build/creative_*.o $crash/build/content_*.o $crash/build/gre_*.o $crash/build/sha.o $crash/build/map_save_service.o $crash/build/compat.o $crash/build/tabs_*.o $crash/build/nbt_lifecycle_*.o $crash/build/tools_*.o $crash/build/lucky_*.o $crash/build/shared_terrain_*.o $crash/build/craft_provider/modded-crafting-candidate.o $crash/build/lce_*.o "$LCE_SDK_OBJECT" --start-group $crash/build/tabs_libopengnm.a -lc -lkernel -lSceNet -lSceGnmDriver -lSceVideoOut -lSceImeDialog -lSceSaveData -lSceUserService -lSceLibcInternal --end-group -o $crash/build/super195.elf
+ld.lld --wrap=mc195_verify_pristine_rx --wrap=mods195_category_status --wrap=mods195_category_count --wrap=mods195_category_wrapper --wrap=lce_sdk_boot --wrap=mc195_craft_select_embedded --wrap=mc195_craft_filter_decide --wrap=steel195_creative_hook_start --wrap=steel195_craft_hook_start --wrap=steel195_resource_hooks_start --wrap=steel195_retirement_hook_start --wrap=mc195_ore_probe_hook_start --wrap=mc195_lucky_hook_start --wrap=mc195_steel_ore_prepare --wrap=steel195_ore_block_hook_start --wrap=mc195_craft_candidate_start --wrap=mc195_lucky_prepare --wrap=mc195_terrain_install --wrap=mc195_giant_texture_install --wrap=mc195_rainbow_install --wrap=mc195_lucky_chat_colour_install --wrap=mods195_private_movie_start --wrap=mods195_nav_start --wrap=mc195_custom_startup_prepare --wrap=mc195_lucky_native_prepare --wrap=_ZN9tab_modal10Navigation4pollEv --wrap=mc195_mods_pad_sample_data --wrap=_Z13mc195_f3_bindP21mc195_natural_process --wrap=_ZN9tab_modal10Navigation5beginEiiiihhPNS_5FrameE --wrap=_ZN9tab_modal10Navigation10invalidateEv --wrap=_ZN11menu_render16NuklearPresenter5startERN9tab_modal10NavigationERKNS_11DirectLeaseEiiiihhPNS_13DirectFrameIdE --wrap=lce_remote_inbound_frame --wrap=lce_remote_pump --wrap=lce_plugin_update_tick --wrap=_ZN12mc195_f3_hud9availableEjb --wrap=_ZN12mc195_f3_hud7enabledEj --wrap=_ZN12mc195_f3_hud5stateEj --wrap=_ZN12mc195_f3_hud6toggleEjb --wrap=_ZN12mc195_f3_hud4tickEj --wrap=_ZN12mc195_f3_hud6renderEjRN11menu_render16PostUiCompositorEPv --wrap=_ZN12mc195_f3_hud10invalidateEj -m elf_x86_64 -pie --wrap=mc195_gre_set_skin_enabled --wrap=mc195_selection_worker_startup_choice --wrap=_ZN9tab_modal10Navigation5inputEiNS_3KeyEbb --wrap=mc195_debug_action_available --wrap=_ZN10mc195_mods5Model4openEv --wrap=_ZN10mc195_mods5Model7refreshEv --wrap=_ZN10mc195_mods5Model5inputEN9tab_modal3KeyEb --wrap=_ZN10mc195_mods5Model4drawERKN11menu_render10DirectSinkEiiiihh --wrap=_ZN9tab_modal10Navigation30configure_visual_world_actionsERKN11tab_actions14WeatherBackendE --version-script "$debug/exports.map" --script "$tc/link.x" -e _init --eh-frame-hdr -L "$tc/lib" $crash/build/crtprx.o $crash/build/super.o $crash/build/frontend_diagnostics.o $crash/build/frontend_crash_logger.o $crash/build/debug_main.o $crash/build/native_pad.o $crash/build/weather.o $crash/build/runtime.o $crash/build/action_trace.o $crash/build/runtime_attest.o $crash/build/shared_tick_195.o $crash/build/dialog_gate_195.o $crash/build/title_detour.o $crash/build/ps4_attest.o $crash/build/store_bridge.o $crash/build/probe.o $crash/build/menu_action.o $crash/build/menu_label.o $crash/build/title_branch.o $crash/build/title_thunk.o $crash/build/offline_observe.o $crash/build/offline_observe_asm.o $crash/build/offline_once_component.o $crash/build/offline_prearm.o $crash/build/offline_repeat.o $crash/build/trace.o $crash/build/registry_component.o $crash/build/trace_*.o $crash/build/store_route.o $crash/build/label_adapter.o $crash/build/catalog_bridge.o $crash/build/catalog_builtin.o $crash/build/catalog_snapshot.o $crash/build/catalog.o $crash/build/selection_selection.o $crash/build/selection_store.o $crash/build/selection_worker.o $crash/build/local_store_ps4.o $crash/build/manifest.o $crash/build/legacy_*.o $crash/build/steel_*.o $crash/build/process_*.o $crash/build/creative_*.o $crash/build/content_*.o $crash/build/gre_*.o $crash/build/sha.o $crash/build/map_save_service.o $crash/build/compat.o $crash/build/tabs_*.o $crash/build/nbt_lifecycle_*.o $crash/build/tools_*.o $crash/build/lucky_*.o $crash/build/shared_terrain_*.o $crash/build/craft_provider/modded-crafting-candidate.o $crash/build/lce_*.o "$LCE_SDK_OBJECT" --start-group $crash/build/tabs_libopengnm.a -lc -lkernel -lSceNet -lSceGnmDriver -lSceVideoOut -lSceImeDialog -lSceSaveData -lSceUserService -lSceLibcInternal --end-group -Map="$crash/build/super195.map" -o $crash/build/super195.elf
 OO_PS4_TOOLCHAIN="$tc" "$tc/bin/linux/create-fself" -in=$crash/build/super195.elf -out=$crash/build/super195.oelf --lib=$crash/build/super195.prx --paid 0x3800000000000011
 sha256sum $crash/build/super195.prx

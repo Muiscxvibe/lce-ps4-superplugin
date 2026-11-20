@@ -34,19 +34,32 @@ variants and collision shapes, entities based on stock mobs, biomes and
 structures. Lua can also set its server tick cadence and request coloured
 particles. The offline CUSA00265 1.95 test verified scripted inventory grants,
 item and placed-block textures, a visible cyan particle burst, and saving and
-reopening a world containing the custom block. Mob registration and renderer
-startup passed on the console. Custom spawning and broader world generation
-need gameplay verification.
+reopening a world containing the custom block. Creative → Mods automatically
+lists registered SDK items and placeable custom block variants, including those
+from packages that register zero ordinary items. The console test verified
+names, taking and placement with a block-only package. A block declared
+`no_item` has no inventory entry. Custom potion, enchantment book and spawn egg
+stacks do not yet have Creative Mods entries.
+
+Mob registration and renderer startup passed on the console. The native SDK
+mob spawn route, viewport tint and opt-in package waypoints still need gameplay
+verification.
 
 The SDK host suites run with `make -C modloader-sdk test`. The build script
 for the full plugin uses the local r72 integration workspace, prebuilt
-components and OpenOrbis. Apply
-[`modloader-r72.patch`](plugin/patches/modloader-r72.patch) from the workspace
-root and overlay the plugin and transport sources in their respective build
-directories. Build the SDK with `LCE_EXPERIMENTAL_FUEL=1`. Pass its combined
-object as `LCE_SDK_OBJECT` to the plugin build with
-`LCE_RELEASE=1 LCE_OFFLINE_PREVIEW=1`. The preview build does not require a
-server signing key.
+components and OpenOrbis. From the workspace root, apply
+[`modloader-r72.patch`](plugin/patches/modloader-r72.patch),
+[`modloader-features-r72.patch`](plugin/patches/modloader-features-r72.patch), and
+[`modloader-creative-r72.patch`](plugin/patches/modloader-creative-r72.patch)
+in that order. Overlay the plugin and transport sources in their respective
+build directories.
+
+Build the SDK with `LCE_EXPERIMENTAL_FUEL=1`, `LCE_EXPERIMENTAL_VIEWPORT_TINT=1`,
+and `LCE_WAYPOINT_PACKAGES=1`. Set `LCE_SDK_ROOT` to the SDK directory and pass its
+combined object as `LCE_SDK_OBJECT`. Build the plugin with those same feature
+flags plus `LCE_RELEASE=1`, `LCE_OFFLINE_PREVIEW=1`, and `LCE_F3_WAYPOINTS=1`.
+Set `LCE_WAYPOINTS_ROOT` to [plugin/waypoints](plugin/waypoints). The preview build
+does not require a server signing key.
 
 - `transport/`: session transport, account sign-in, join hooks and the signed
   anticheat client report (`client_report.c`).

@@ -412,13 +412,12 @@ extern "C" int lce195_ev_route_block_use(uintptr_t block, uint32_t id, uintptr_t
     const uint32_t stock = g.ready && original == g.host.image + LCE195_RVA_DISPENSER_USE ? LCE195_RVA_DISPENSER_USE : LCE195_RVA_BLOCK_USE;
     return route(g.block_uses, block, id, original, 0, stock);
 }
-extern "C" uint64_t lce195_ev_block_use_thunk(uintptr_t block, uintptr_t level, uintptr_t pos, uintptr_t state, const lce195_pair *player,
-                                              uintptr_t r9, uintptr_t s0, uintptr_t s1, uintptr_t s2) {
+extern "C" bool lce195_ev_block_use_thunk(uintptr_t block, uintptr_t level, uintptr_t pos, uintptr_t state, const lce195_pair *player,
+                                          int hand, const void *direction, float cx, float cy, float cz, bool simulate) {
     Routed *r = g.ready ? find_routed(g.block_uses, block) : nullptr;
     uintptr_t original = r ? r->original : g.host.image + LCE195_RVA_BLOCK_USE;
     int32_t xyz[3];
-    // stack word 1 is the "simulate" flag (CraftingTableBlock::use 0x1d4ac8 returns false when set): no event then
-    if (r && !g.failed && !(s1 & 0xff) && player && player->object && server_level(level) && rd(pos, xyz, sizeof xyz) &&
+    if (r && !g.failed && !simulate && player && player->object && server_level(level) && rd(pos, xyz, sizeof xyz) &&
         xyz[1] >= 0 && xyz[1] < 256) {
         lce195_view v{};
         bool framed = g.host.view_borrow && g.host.view_borrow(g.host.opaque, player, level, &v) == 1;
@@ -427,10 +426,10 @@ extern "C" uint64_t lce195_ev_block_use_thunk(uintptr_t block, uintptr_t level, 
         ev.struct_size = sizeof ev; ev.x = xyz[0]; ev.y = xyz[1]; ev.z = xyz[2]; ev.block_id = r->id; ev.player = (void *)player->object;
         ev.level = (void *)level; ev.face = -1;
         ++g.st.block_uses;
-        if (dispatch(LCE_EV_BLOCK_USE, &ev)) return 1;   // handled: the click is consumed (no placement / item use)
+        if (dispatch(LCE_EV_BLOCK_USE, &ev)) return true;   // handled: the click is consumed (no placement / item use)
     }
-    return ((uint64_t (*)(uintptr_t, uintptr_t, uintptr_t, uintptr_t, const lce195_pair *, uintptr_t, uintptr_t, uintptr_t, uintptr_t))original)(
-        block, level, pos, state, player, r9, s0, s1, s2);
+    return reinterpret_cast<decltype(&lce195_ev_block_use_thunk)>(original)(
+        block, level, pos, state, player, hand, direction, cx, cy, cz, simulate);
 }
 // Entity events have no player: publish the anchor's view (same level, still current) as a level-only frame so
 // level/entity services work from ENTITY_* handlers; player services stay refused (has_player = 0).

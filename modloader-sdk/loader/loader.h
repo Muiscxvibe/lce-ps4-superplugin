@@ -7,6 +7,7 @@
 #include <stddef.h>
 #include <stdint.h>
 #include "../include/lce_mod_api.h"
+#include "../include/lce_mod_package.h"
 #include "backend.h"
 #include "ledger.h"
 
@@ -45,6 +46,7 @@ typedef struct {
 #define LCE_LOADER_PLACEHOLDERS   (1u << 1)  /* keep orphaned ledger IDs alive with placeholders */
 #define LCE_LOADER_STRICT         (1u << 2)  /* any mod failure fails the whole load */
 #define LCE_LOADER_REQUIRE_ENABLED (1u << 3) /* only load mods whose <dir>/enabled marker exists */
+#define LCE_LOADER_WAYPOINT_PACKAGES (1u << 4) /* host owns an offline package waypoint renderer */
 
 typedef struct {
     const char *root;          /* "/data/lce-mods" */
@@ -92,6 +94,9 @@ lce_status lce_loader_commit(lce_loader *l);
 lce_phase lce_loader_phase(const lce_loader *l);
 uint32_t lce_loader_mod_count(const lce_loader *l);
 const lce_mod_report *lce_loader_mod(const lce_loader *l, uint32_t i);
+/* Startup owner only, after commit; returns the total available for the layer.
+ * Copies at most cap records in committed mod-id and manifest order. */
+uint32_t lce_loader_waypoints(const lce_loader *l, uint32_t layer, lce_pkg_waypoint *out, uint32_t cap);
 /* Final plan (valid after a successful prepare); for diagnostics and tests. */
 const lce_plan *lce_loader_plan(const lce_loader *l);
 const lce_ledger *lce_loader_ledger(const lce_loader *l);

@@ -36,6 +36,8 @@ $(B)/test_config: tests/test_config.cpp loader/config_store.h tests/check.h
 	@mkdir -p $(B); $(CXX) $(CXXFLAGS) tests/test_config.cpp -o $@
 $(B)/test_fuel195: modules/fuel195/tests/test_fuel195.cpp modules/fuel195/fuel195.cpp modules/fuel195/adapter.cpp modules/fuel195/fuel195.h tests/check.h
 	@mkdir -p $(B); $(CXX) $(CXXFLAGS) modules/fuel195/tests/test_fuel195.cpp modules/fuel195/fuel195.cpp modules/fuel195/adapter.cpp -o $@
+$(B)/test_mob_spawn_route195: tests/test_mob_spawn_route195.cpp integration/r72_world_bind195.cpp modules/entities195/entities195.h tests/check.h
+	@mkdir -p $(B); $(CXX) $(CXXFLAGS) tests/test_mob_spawn_route195.cpp integration/r72_world_bind195.cpp -o $@
 $(B)/test_ext: tests/test_ext.cpp tests/mock_backend.cpp $(CORE) $(B)/sha256.o loader/vanilla_195.inc
 	$(CXX) $(CXXFLAGS) tests/test_ext.cpp tests/mock_backend.cpp $(CORE) $(B)/sha256.o -o $@
 $(B)/test_sha256: tests/test_sha256.cpp $(B)/sha256.o
@@ -87,9 +89,10 @@ $(B)/test_retail195_bridge: tests/test_retail195_bridge.cpp loader/retail195/bac
 	$(CXX) $(CXXFLAGS) -Wno-misleading-indentation -DLCE195_HOST_TEST tests/test_retail195_bridge.cpp loader/retail195/backend195.cpp $(CORE) $(ITEMS195) $(R72_SEAMS) $(B)/sha256.o $(B)/r72_catalog.o $(B)/r72_atlas.o $(B)/r72_assets.o -o $@
 
 HOST_TESTS = $(B)/test_sha256 $(B)/test_package $(B)/test_ledger $(B)/test_loader $(wildcard tests/test_retail195.cpp)
-test: $(PKGS) $(B)/test_sha256 $(B)/test_package $(B)/test_ledger $(B)/test_loader $(B)/test_oneshot $(B)/test_ext $(B)/test_composite195 $(B)/test_config $(B)/test_fuel195
+test: $(PKGS) $(B)/test_sha256 $(B)/test_package $(B)/test_ledger $(B)/test_loader $(B)/test_oneshot $(B)/test_ext $(B)/test_composite195 $(B)/test_config $(B)/test_fuel195 $(B)/test_mob_spawn_route195
 	$(B)/test_sha256
 	$(B)/test_fuel195
+	$(B)/test_mob_spawn_route195
 	@if [ -f /home/codey/minecraft-ps4-research/private-direct-legacy-capture/legacy-195-analysis.elf ]; then python3 -I modules/fuel195/tests/test_image_pins.py; else echo "retail image absent: skipping fuel195 image pins"; fi
 	@if [ -f /home/codey/minecraft-ps4-research/private-direct-legacy-capture/legacy-195-analysis.elf ] && [ -x /home/codey/minecraft-ps4-research/private-direct-legacy-capture/venv-analysis/bin/python ]; then /home/codey/minecraft-ps4-research/private-direct-legacy-capture/venv-analysis/bin/python -I modules/fuel195/tests/test_retail_tick.py; else echo "retail image or analysis venv absent: skipping fuel195 tick"; fi
 	$(B)/test_config build/pkg/allcontent/config

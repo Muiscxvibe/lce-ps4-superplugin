@@ -1,6 +1,7 @@
 // blocks195: generic N-block publisher for CUSA00265 1.95. See blocks195.h for
 // the phase contract and STATUS.md for the evidence behind every RVA/offset.
 #include "blocks195.h"
+#include "../../integration/sdk_creative_blocks.h"
 #include <stdio.h>
 #include <string.h>
 
@@ -101,6 +102,7 @@ const uint32_t k_title_vtables[][2] = {{0x1225850u + 0x30, 0x5985b0u}, {0x1239d7
 [[maybe_unused]] const uint8_t k_set_stacked[8] = {0x48, 0x89, 0xf8, 0x40, 0x88, 0x77, 0x31, 0xc3};        // 0x3a5a70
 [[maybe_unused]] const uint8_t k_dir_index[4] = {0x8b, 0x47, 0x08, 0xc3};                                  // 0x200600
 [[maybe_unused]] const uint8_t k_stack_aux[4] = {0x8b, 0x47, 0x3c, 0xc3};                                  // 0x3557c0
+const uint8_t k_item_name_pair[7] = {0x48, 0x8b, 0x32, 0x48, 0x8b, 0x52, 0x08};  // 0x3af0b0: load shared_ptr object and control
 // API 1.7 shapes.
 [[maybe_unused]] const uint8_t k_box[16] = {0x55,0x48,0x89,0xe5,0x48,0x83,0xec,0x60,0xbf,0x30,0x00,0x00,0x00,0xc5,0xfb,0x11};  // 0x170, alloc 0x30
 [[maybe_unused]] const uint8_t k_ret_false[3] = {0x31, 0xc0, 0xc3};
@@ -654,8 +656,9 @@ extern "C" int b195_items_publish(b195_module *m) {
     for (uint32_t i = 0; i < m->count; ++i) any_variant |= m->blocks[i].variants && m->blocks[i].item_id;
     if (any_variant && (bi[2 + 0x58 / 8] != B + 0x3aeea0u || !is(m, B + B195_RVA_MULTI_ITEM_VTABLE + 0x58, B + B195_RVA_MULTI_LEVEL_DATA) ||
                         !code(m, B195_RVA_MULTI_LEVEL_DATA, k_level_data, 3) || !code(m, B195_RVA_SET_STACKED, k_set_stacked, 8) ||
-                        !code(m, B195_RVA_STACK_AUX, k_stack_aux, 4)))
-        return refuse_items(m, "variant block-item pin (BlockItem/MultiBlockItem +0x58, stacked-by-data +0x31, aux +0x3c)");
+                        !code(m, B195_RVA_ITEM_NAME + 0x40u, k_item_name_pair, sizeof k_item_name_pair) ||
+                        !code(m, B195_RVA_STACK_AUX, k_stack_aux, sizeof k_stack_aux)))
+        return refuse_items(m, "variant block-item pin (BlockItem/MultiBlockItem +0x58, stacked-by-data +0x31, name shared stack and aux +0x3c)");
     uintptr_t fire = 0;
     bool any_fire = false;
     for (uint32_t i = 0; i < m->count; ++i) any_fire |= m->blocks[i].flammable != 0;
@@ -886,19 +889,23 @@ extern "C" int b195_resource_count_dispatch(void *block, int fortune, uintptr_t 
     return m->n.resource_count(block, fortune, random);
 }
 
-extern "C" void *b195_item_name_dispatch(void *out, void *item, void *stack) {
+extern "C" void *b195_item_name_dispatch(void *out, void *item, const void *shared_stack) {
     b195_module *m = __atomic_load_n(&g_m, __ATOMIC_ACQUIRE);
     if (!m || !out) return nullptr;
     for (uint32_t i = 0; i < m->count; ++i) {
         const b195_block &b = m->blocks[i];
         if (!b.item || b.item != (uintptr_t)item) continue;
         *(uint16_t *)((uintptr_t)out + 8) = 0; *(uint64_t *)((uintptr_t)out + 0x18) = 0; *(uint64_t *)((uintptr_t)out + 0x20) = 7;
-        int32_t aux = (b.variants && stack) ? *(const int32_t *)((uintptr_t)stack + B195_F_STACK_AUX) : 0;   // getAuxValue 0x3557c0
+        // The name virtual gets a reference to shared_ptr<ItemInstance>. Its first word is the instance.
+        uintptr_t stack = 0;
+        if (b.variants && shared_stack) __builtin_memcpy(&stack, shared_stack, sizeof stack);
+        int32_t aux = 0;
+        if (stack) __builtin_memcpy(&aux, (const void *)(stack + B195_F_STACK_AUX), sizeof aux);
         if (aux > 0 && aux < (int32_t)b.variants && b.vname_len[aux]) m->n.wstring(out, b.vname[aux], b.vname_len[aux]);
         else m->n.wstring(out, b.name, b.name_len);
         return out;
     }
-    return m->n.item_name(out, item, stack);
+    return m->n.item_name(out, item, shared_stack);
 }
 
 // ---- storage dispatchers: newBlockEntity wrapper (title, chest-model cull) and the culling view distance ----
@@ -1166,6 +1173,73 @@ extern "C" uint32_t b195_mapped_items(const b195_module *m, b195_mapped_item *ou
     return n;
 }
 
+namespace {
+static_assert(B195_MAX_BLOCKS * B195_MAX_VARIANTS == LCE_SDK_CREATIVE_BLOCK_CAPACITY);
+
+// Item::byId at 0x385af0 bounds-checks and indexes this same vector.
+bool creative_item_live(b195_module *m, const b195_block &b, const uintptr_t items[3]) {
+    const uint32_t mapped_id = b.id < 256 ? b.id : b.id + 768;
+    return b.item && b.object && b.desc && b.desc->key && b.desc->key[0] &&
+           !(b.desc->flags & LCE_BLOCK_FLAG_NO_ITEM) && b.item_id && b.item_id == mapped_id &&
+           b.item_id < (items[1] - items[0]) / 8 &&
+           is(m, items[0] + 8 * b.item_id, b.item) &&
+           is(m, b.item, (uintptr_t)&b.item_vtable[2]) && is(m, b.item + 0xa0, b.object);
+}
+} // namespace
+
+extern "C" int b195_creative_entries(b195_module *m, lce_sdk_creative_block_entry *out, uint32_t cap) {
+    if (!out && cap) return -1;
+    if (!m || m->state != B195_ITEMS_DONE) return m && m->state == B195_UNCERTAIN ? -1 : 0;
+    uintptr_t items[3];
+    if (m->items_state != B195_ITEMS_DONE || m->count > B195_MAX_BLOCKS || !item_header(m, items)) return -1;
+
+    const b195_block *blocks[B195_MAX_BLOCKS];
+    uint32_t count = 0, needed = 0;
+    for (uint32_t i = 0; i < m->count; ++i) {
+        const b195_block &b = m->blocks[i];
+        if (b.dropped || !b.item_id) {
+            if (b.item) return -1;
+            continue;
+        }
+        if (!creative_item_live(m, b, items) || b.variants == 1 || b.variants > B195_MAX_VARIANTS) return -1;
+        if (b.variants) {
+            uint8_t stacked = 0;
+            if (b.item_vtable[2 + 0x58 / 8] != m->base + B195_RVA_MULTI_LEVEL_DATA ||
+                !rd(m, b.item + B195_F_ITEM_STACKED, &stacked, 1) || stacked != 1) return -1;
+        }
+        for (uint32_t j = 0; j < count; ++j) {
+            const b195_block &prior = *blocks[j];
+            if (prior.item == b.item || prior.item_id == b.item_id || !strcmp(prior.desc->key, b.desc->key)) return -1;
+        }
+        blocks[count++] = &b;
+        needed += b.variants ? b.variants : 1;
+    }
+    if (!out) return (int)needed;
+    if (needed > cap) return -1;
+
+    uint32_t row = 0;
+    for (uint32_t i = 0; i < count; ++i) {
+        const b195_block &b = *blocks[i];
+        const uint32_t variants = b.variants ? b.variants : 1;
+        for (uint32_t aux = 0; aux < variants; ++aux) out[row++] = {b.item, b.item_id, aux, b.desc->key};
+    }
+    return (int)needed;
+}
+
+extern "C" const char *b195_creative_key(b195_module *m, uintptr_t item, uint32_t item_id) {
+    if ((!item && !item_id) || !m || m->state != B195_ITEMS_DONE || m->items_state != B195_ITEMS_DONE || m->count > B195_MAX_BLOCKS)
+        return nullptr;
+    const b195_block *found = nullptr;
+    for (uint32_t i = 0; i < m->count; ++i) {
+        const b195_block &b = m->blocks[i];
+        if (b.dropped || !b.item_id || ((!item || b.item != item) && (!item_id || b.item_id != item_id))) continue;
+        if (found || (item && b.item != item) || (item_id && b.item_id != item_id)) return nullptr;
+        found = &b;
+    }
+    uintptr_t items[3];
+    return found && item_header(m, items) && creative_item_live(m, *found, items) ? found->desc->key : nullptr;
+}
+
 // ---- terrain ----------------------------------------------------------------------
 extern "C" uint32_t b195_terrain_tile_count(const b195_module *m) { return m ? m->tile_count : 0; }
 
@@ -1339,7 +1413,7 @@ extern "C" void b195_natives_bind(b195_natives *n, uintptr_t b) {
     n->item_register = (void (*)(uintptr_t, uint32_t, const void *, uintptr_t))(b + B195_RVA_ITEM_REGISTER);
     n->block_item_ctor = (void (*)(void *, uintptr_t))(b + B195_RVA_BLOCK_ITEM_CTOR);
     n->map_slot = (uintptr_t (*)(uintptr_t, const uintptr_t *))(b + B195_RVA_BLOCK_ITEM_MAP_SLOT);
-    n->item_name = (void *(*)(void *, void *, void *))(b + B195_RVA_ITEM_NAME);
+    n->item_name = (void *(*)(void *, void *, const void *))(b + B195_RVA_ITEM_NAME);
     n->fire_slot = (int *(*)(uintptr_t, const uintptr_t *))(b + B195_RVA_FIRE_ODDS_SLOT);
     n->sprite_bind = (void (*)(uintptr_t, uintptr_t, uint64_t, int, int, int, int, int))(b + B195_RVA_SPRITE_BIND);
     n->state_from_data = (uintptr_t (*)(void *, int))(b + B195_RVA_COLORED_FROM_DATA);

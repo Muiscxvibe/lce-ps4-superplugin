@@ -706,29 +706,48 @@ int main() {
     events.clear();
     { uintptr_t block = image + 0x11e0000; put<uintptr_t>(block, image + 0x1270000);
       static int orig_calls = 0;
-      static auto use_orig = +[](uintptr_t, uintptr_t, uintptr_t, uintptr_t, const lce195_pair *, uintptr_t, uintptr_t, uintptr_t, uintptr_t) -> uint64_t { ++orig_calls; return 0; };
-      tramp(0x940b0, (void*)(uint64_t(*)(uintptr_t,uintptr_t,uintptr_t,uintptr_t,const lce195_pair*,uintptr_t,uintptr_t,uintptr_t,uintptr_t))use_orig);
+      static constexpr uintptr_t direction = 0x2357102468ULL;
+      const decltype(&lce195_ev_block_use_thunk) use_orig =
+          +[](uintptr_t, uintptr_t, uintptr_t, uintptr_t, const lce195_pair *, int hand, const void *face,
+              float cx, float cy, float cz, bool simulate) -> bool {
+              CHECK(hand == 1 && reinterpret_cast<uintptr_t>(face) == direction);
+              CHECK(cx == 0.125f && cy == 0.375f && cz == 0.75f);
+              ++orig_calls;
+              return simulate;
+          };
+      tramp(0x940b0, reinterpret_cast<const void *>(use_orig));
       CHECK(lce195_ev_route_block_use(block, 253, image + 0x940b0) == 1);
       CHECK(lce195_ev_route_block_use(block, 253, image + 0x940b0) == 0);   // routed once
       int32_t pos[3] = {7, 65, 2}; uintptr_t ppos = image + 0x12a1000; memcpy((void*)ppos, pos, sizeof pos);
       lce195_pair pp{alice, alice + 0x1000};
+      const auto click = [&](uintptr_t target, bool simulate) {
+          return lce195_ev_block_use_thunk(target, level, ppos, image + 0x12b0000, &pp,
+                                           1, reinterpret_cast<const void *>(direction), 0.125f, 0.375f, 0.75f, simulate);
+      };
       handle_use = 0;
-      CHECK(lce195_ev_block_use_thunk(block, level, ppos, image + 0x12b0000, &pp, 0, 0, 0, 0) == 0 && orig_calls == 1);
+      CHECK(!click(block, false) && orig_calls == 1);
       handle_use = 1;
-      CHECK(lce195_ev_block_use_thunk(block, level, ppos, image + 0x12b0000, &pp, 0, 0, 0, 0) == 1 && orig_calls == 1);   // handled
-      CHECK(lce195_ev_block_use_thunk(block, level, ppos, image + 0x12b0000, &pp, 0, 0, 1, 0) == 0 && orig_calls == 2);   // simulate: no event
+      CHECK(click(block, false) && orig_calls == 1);   // handled: no original
+      CHECK(click(block, true) && orig_calls == 2);    // simulate: no callback, original result forwarded
+      put<uint8_t>(level + 0x248, 1);
+      CHECK(!click(block, false) && orig_calls == 3);  // client: no callback
+      put<uint8_t>(level + 0x248, 0);
       handle_use = 0;
       int n = 0; for (auto &e:events) if (e.ev==LCE_EV_BLOCK_USE && e.id==253 && e.x==7 && e.y==65 && e.z==2 && e.level==(void*)level) ++n;
       CHECK(n == 2);
       // storage block: DispenserBlock::use is the original; an unhandled click reaches it (opens the container)
       uintptr_t chest = image + 0x11e2000; put<uintptr_t>(chest, image + 0x1270000);
       static int disp_calls = 0;
-      static auto disp_use = +[](uintptr_t, uintptr_t, uintptr_t, uintptr_t, const lce195_pair *, uintptr_t, uintptr_t, uintptr_t, uintptr_t) -> uint64_t { ++disp_calls; return 1; };
-      tramp(0x2085a0, (void*)(uint64_t(*)(uintptr_t,uintptr_t,uintptr_t,uintptr_t,const lce195_pair*,uintptr_t,uintptr_t,uintptr_t,uintptr_t))disp_use);
+      const decltype(&lce195_ev_block_use_thunk) disp_use =
+          +[](uintptr_t, uintptr_t, uintptr_t, uintptr_t, const lce195_pair *, int, const void *, float, float, float, bool) -> bool {
+              ++disp_calls;
+              return true;
+          };
+      tramp(0x2085a0, reinterpret_cast<const void *>(disp_use));
       CHECK(lce195_ev_route_block_use(chest, 254, image + 0x2085a0) == 1);
-      CHECK(lce195_ev_block_use_thunk(chest, level, ppos, image + 0x12b0000, &pp, 0, 0, 0, 0) == 1 && disp_calls == 1 && orig_calls == 2);
+      CHECK(click(chest, false) && disp_calls == 1 && orig_calls == 3);
       handle_use = 1;
-      CHECK(lce195_ev_block_use_thunk(chest, level, ppos, image + 0x12b0000, &pp, 0, 0, 0, 0) == 1 && disp_calls == 1);   // mod handled: no screen
+      CHECK(click(chest, false) && disp_calls == 1);   // mod handled: no screen
       handle_use = 0;
     }
 
