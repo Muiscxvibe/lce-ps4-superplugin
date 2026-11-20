@@ -805,6 +805,10 @@ if type(spawn_tinted_particles) == "function" then
 end
 ```
 
+#### Furnace fuel duration
+
+`lce.fuel_ticks(item_key)` reads the published SDK furnace fuel table by namespaced item key. It returns integer burn ticks after successful experimental fuel activation. It returns `nil` during `main.lua` registration and whenever a published SDK entry is absent, including for built-in fuel rules such as ordinary Coal. Use a callback such as `WorldLoad` to read committed values. See [Lua Fuel Status](examples/lua-fuel-status/README.md) for a complete package.
+
 ### 8.5 Config files (API 1.8)
 
 Settings that players can change without rebuilding the mod. This is the counterpart of Forge's `ForgeConfigSpec` and `Configuration`.

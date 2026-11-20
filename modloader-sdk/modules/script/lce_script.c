@@ -524,6 +524,63 @@ static int b_add_effect(lua_State *L) {
 /* ---- world services (API 1.1) ------------------------------------------------- */
 #define API_HAS(s, f) ((s)->api && (s)->api->struct_size >= offsetof(lce_api, f) + sizeof(void *) && (s)->api->f)
 
+static const char *brewing_key(lua_State *L, int index, const char *error) {
+    size_t len;
+    luaL_checktype(L, index, LUA_TSTRING);
+    const char *key = lua_tolstring(L, index, &len);
+    if (!len || len >= LCE_MAX_KEY || memchr(key, '\0', len)) luaL_error(L, "%s", error);
+    return key;
+}
+
+/* Keep all four strings anchored until the loader copies the descriptor. */
+static const char *brewing_field(lua_State *L, const char *field) {
+    lua_pushstring(L, field);
+    lua_rawget(L, 1);
+    return brewing_key(L, -1, "register_brewing: invalid resource key");
+}
+
+static int b_register_brewing(lua_State *L) {
+    lce_script *s = self(L);
+    luaL_checktype(L, 1, LUA_TTABLE);
+    lce_brew_desc d = {0};
+    d.struct_size = sizeof d;
+    d.key = brewing_field(L, "key");
+    d.input_potion = brewing_field(L, "input");
+    d.reagent = brewing_field(L, "reagent");
+    d.output_potion = brewing_field(L, "output");
+    lce_status rc = LCE_E_UNSUPPORTED;
+    if (API_HAS(s, register_brewing) && (s->api->capabilities & LCE_CAP_BREWING))
+        rc = s->api->register_brewing(s->ctx, &d);
+    if (rc != LCE_OK) ++s->st.denied;
+    lua_pushboolean(L, rc == LCE_OK);
+    lua_pushinteger(L, rc);
+    return 2;
+}
+
+static int b_brewing_result(lua_State *L) {
+    lce_script *s = self(L);
+    const char *input = brewing_key(L, 1, "brewing_result: invalid input potion key");
+    const char *reagent = brewing_key(L, 2, "brewing_result: invalid reagent item key");
+    const char *form = "drink";
+    if (!lua_isnoneornil(L, 3)) {
+        size_t len;
+        luaL_checktype(L, 3, LUA_TSTRING);
+        form = lua_tolstring(L, 3, &len);
+        if (len >= sizeof "lingering" || memchr(form, '\0', len) ||
+            (strcmp(form, "drink") && strcmp(form, "splash") && strcmp(form, "lingering")))
+            return luaL_argerror(L, 3, "expected drink, splash or lingering");
+    }
+    const char *output = s->cfg.brewing_result ?
+        s->cfg.brewing_result(s->cfg.host_user, input, reagent, form) : NULL;
+    if (!output) {
+        lua_pushnil(L);
+        return 1;
+    }
+    lua_pushstring(L, output);
+    lua_pushstring(L, form);
+    return 2;
+}
+
 /* Keep the key and binary pixel string on the Lua stack until the loader copies both. */
 static int b_register_texture(lua_State *L) {
     lce_script *s = self(L);
@@ -1118,6 +1175,18 @@ static int b_resolve_block(lua_State *L) {
     const char *key = luaL_checkstring(L, 1);
     lua_pushinteger(L, s->api->resolve_block ? s->api->resolve_block(s->ctx, key) : -1); return 1;
 }
+static int b_fuel_ticks(lua_State *L) {
+    lce_script *s = self(L);
+    luaL_checktype(L, 1, LUA_TSTRING);
+    size_t len;
+    const char *key = lua_tolstring(L, 1, &len);
+    uint32_t ticks = 0;
+    if (s->cfg.fuel_ticks && len && len < LCE_MAX_KEY && !memchr(key, '\0', len))
+        ticks = s->cfg.fuel_ticks(s->cfg.host_user, key);
+    if (ticks) lua_pushinteger(L, ticks);
+    else lua_pushnil(L);
+    return 1;
+}
 #ifdef LCE_HAVE_CONFIG_1_8
 /* lce.config(key [, default [, min, max]]) -> value (API 1.8, /data/lce-mods/<modid>/config; any phase, also while main.lua
  * registers). The default's type picks the lookup: integer -> config_int, number -> config_double, boolean -> 0/1 integer,
@@ -1321,10 +1390,12 @@ static void install_bindings(lua_State *L) {
         {"register_biome", b_register_biome}, {"register_structure", b_register_structure},
         {"register_item", b_register_item}, {"register_block", b_register_block},
         {"register_recipe", b_register_recipe}, {"register_smelting", b_register_smelting},
+        {"register_brewing", b_register_brewing}, {"brewing_result", b_brewing_result},
         {"subscribe", b_subscribe}, {"send_chat", b_send_chat}, {"give_item", b_give_item},
         {"subscribe_tick", b_subscribe_tick}, {"tick_stats", b_tick_stats},
         {"translate", b_translate}, {"log", b_log}, {"drop_item", b_drop_item}, {"add_effect", b_add_effect},
         {"resolve_item", b_resolve_item}, {"resolve_block", b_resolve_block},
+        {"fuel_ticks", b_fuel_ticks},
         {"register_entity", b_register_entity},
         {"set_block", b_set_block}, {"get_block", b_get_block}, {"spawn_entity", b_spawn_entity}, {"play_sound", b_play_sound},
         {"explode", b_explode}, {"set_fire", b_set_fire}, {"heal", b_heal}, {"damage_entity", b_damage_entity},

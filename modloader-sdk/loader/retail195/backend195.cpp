@@ -366,26 +366,46 @@ extern "C" int lce195_backend_publish_late(lce195_backend *b) {
         b->smelt_state = rc == 1 ? LCE195_SDK_RECIPES_DONE : rc == 0 ? LCE195_SDK_REFUSED : LCE195_SDK_UNCERTAIN;
         if (rc != 1) result = rc < 0 ? -1 : 0;
     }
-    if (b->brew_count && !b->brew_state) {
-        b->brew_state = 1;
+    if (b->brew_count && !__atomic_load_n(&b->brew_state, __ATOMIC_ACQUIRE)) {
+        __atomic_store_n(&b->brew_state, 1u, __ATOMIC_RELAXED);
         uint32_t k = 0;
         int rc = 1;
         for (uint32_t i = 0; rc == 1 && i < p->ext_count; ++i) {
             if (p->ext[i].type != LCE_EXT_BREW) continue;
             if (k >= LCE195_SDK_MAX_BREWS || lce195x_brew_from_plan(&b->xenv, p, &p->ext[i], &b->brews[k]) != 1) { rc = 0; snprintf(b->last_error, sizeof b->last_error, "brewing %s: reagent/potion unresolved", p->ext[i].key); break; }
-            ++k;
+            b->brew_descs[k++] = (const lce_brew_desc *)p->ext[i].desc;
         }
-        if (rc == 1 && k) {
+        if (rc == 1 && k == b->brew_count) {
             memset(&g_brew_pub, 0, sizeof g_brew_pub);
             g_brew_pub.env = &b->xenv;
             rc = lce195x_brew_publish(&g_brew_pub, b->brews, k);
             if (rc != 1) snprintf(b->last_error, sizeof b->last_error, "brewing: mix publisher %s", rc ? "uncertain" : "refused");
+        } else if (rc == 1) {
+            snprintf(b->last_error, sizeof b->last_error, "brewing: recipe count changed after prepare");
+            rc = 0;
         }
-        b->brew_state = rc == 1 ? LCE195_SDK_RECIPES_DONE : rc == 0 ? LCE195_SDK_REFUSED : LCE195_SDK_UNCERTAIN;
+        const uint32_t state = rc == 1 ? LCE195_SDK_RECIPES_DONE : rc == 0 ? LCE195_SDK_REFUSED : LCE195_SDK_UNCERTAIN;
+        __atomic_store_n(&b->brew_state, state, __ATOMIC_RELEASE);
         if (rc != 1 && result >= 0) result = rc < 0 ? -1 : 0;
     }
     __atomic_store_n(&b->held_phase, 0u, __ATOMIC_RELEASE);
     return result;
+}
+
+extern "C" const char *lce195_backend_brewing_result(const lce195_backend *b, const char *input, const char *reagent, const char *form) {
+    if (!b || __atomic_load_n(&b->brew_state, __ATOMIC_ACQUIRE) != LCE195_SDK_RECIPES_DONE ||
+        !input || !reagent || !form) return nullptr;
+    // Retail mix() checks stock container changes before the potion mix vector.
+    const bool drink = !strcmp(form, "drink");
+    const bool splash = !strcmp(form, "splash");
+    if ((!drink && !splash && strcmp(form, "lingering")) ||
+        (drink && !strcmp(reagent, "minecraft:gunpowder")) ||
+        (splash && !strcmp(reagent, "minecraft:dragon_breath"))) return nullptr;
+    for (uint32_t i = 0; i < b->brew_count; ++i) {
+        const lce_brew_desc *d = b->brew_descs[i];
+        if (!strcmp(d->input_potion, input) && !strcmp(d->reagent, reagent)) return d->output_potion;
+    }
+    return nullptr;
 }
 
 extern "C" void *lce195_sdk_name_dispatch(void *out, void *item, void *stack) {

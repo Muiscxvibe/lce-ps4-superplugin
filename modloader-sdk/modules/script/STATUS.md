@@ -34,6 +34,7 @@ make forward progress (every instruction re-raises), and `lce_script_run_main` /
 | `lce.register_recipe{key,result,count,shapeless,cells,width,height}` | `register_recipe` |
 | `lce.register_smelting{key,input,result,count,xp_milli}` | `register_smelting` |
 | `lce.register_fuel{item,burn_ticks}` | `register_fuel`; item is a namespaced key, burn time is an integer from 1 to 72000 ticks. Returns success and status; backend fuel support remains experimental. |
+| `lce.fuel_ticks(item_key)` | Lua host callback reads the committed SDK fuel table. Returns integer ticks or `nil` when the entry is absent or the experimental backend has yet to publish it. |
 | `lce.register_feature{key,kind,dimension,block,block2,structure,size,per_chunk,min_y,max_y,rarity,biomes}` | `register_feature`; kind 1 = ore, 2 = tree, 4 = lake, 5 = structure. Biomes is an optional list of biome keys. Returns success and status. |
 | `lce.register_biome{key,name,temperature_milli,rainfall_milli,top_block,filler_block,grass_rgb,foliage_rgb,water_rgb,sky_rgb,weight,height_base_milli,height_variation_milli,features}` | `register_biome`; requires `LCE_CAP_BIOMES`. |
 | `lce.register_structure{key,size_x,size_y,size_z,palette,blocks}` | `register_structure`; requires `LCE_CAP_STRUCTURES`. |

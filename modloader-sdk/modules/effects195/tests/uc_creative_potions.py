@@ -165,28 +165,39 @@ def check_creative_potions(u, check, potions, publish_brews):
         native(0x562cd0, stack, make_stack(item), potion)
         return stack
 
-    def mix(item, source, ingredient, expected):
+    def mix(item, source, ingredient, expected, output_item=None):
         before = potion_stack(item, source)
         result = zalloc(16)
         check(native(0x5623e0, before, ingredient) & 0xff == 1,
               'retail potion-mix check finds the recipe')
         check(native(0x562740, result, ingredient, before) == result and
-              q(u, q(u, result) + 0x28) == item and native(0x562670, result) == expected,
-              'retail brewing returns the exact tagged potion in the original item form')
+              q(u, q(u, result) + 0x28) == (output_item or item) and native(0x562670, result) == expected,
+              'retail brewing returns the expected tagged potion and bottle form')
         release(result)
         release(before)
 
     stock_pair = make_stack(stock_reagent, q(u, q(u, first + 8) + 16) & 0xffffffff)
     mix(drinks, stock_from, stock_pair, stock_to)
-    check(publish_brews([(4, 44, reagent_item, -1), (44, 43, reagent_item, -1)]) == 1,
-          'SDK publishes the entire two-step chain into the retail vector')
+    # Items::init binds gunpowder and dragon_breath to these globals.
+    gunpowder, dragon_breath = q(u, 0x14179c0), q(u, 0x1417cb8)
+    check(publish_brews([(4, 44, reagent_item, -1), (44, 43, reagent_item, -1),
+                         (44, 43, gunpowder, -1), (44, 43, dragon_breath, -1)]) == 1,
+          'SDK publishes the chain and both stock-priority reagent pairs')
     begin, end = q(u, vec + 8), q(u, vec + 16)
-    check(end - begin == len(stock) + 16 and bytes(u.mem_read(begin, len(stock))) == stock,
+    check(end - begin == len(stock) + 32 and bytes(u.mem_read(begin, len(stock))) == stock,
           'stock mix pointers are preserved in their original order')
     check(native(0x561b70, reagent) & 0xff == 1, 'the retail ingredient check now accepts the custom Item')
     mix(drinks, stock_from, stock_pair, stock_to)
     for _, item, _ in items[:3]:
         mix(item, native(0x55e560, 4), reagent, potions[1][0])
         mix(item, potions[1][0], reagent, potions[0][0])
+    gunpowder_stack, dragon_stack = make_stack(gunpowder), make_stack(dragon_breath)
+    splash, lingering = items[1][1], items[2][1]
+    mix(drinks, potions[1][0], gunpowder_stack, potions[1][0], splash)
+    mix(splash, potions[1][0], gunpowder_stack, potions[0][0])
+    mix(splash, potions[1][0], dragon_stack, potions[1][0], lingering)
+    mix(lingering, potions[1][0], dragon_stack, potions[0][0])
+    release(gunpowder_stack)
+    release(dragon_stack)
     release(stock_pair)
     release(reagent)

@@ -314,6 +314,34 @@ int main() {
       CHECK(fuel_ticks.size()==3); lce_script_free(s);
     }
 
+    {
+      lce_script_config cfg{};
+      unsigned reads = 0;
+      cfg.host_user = &reads;
+      cfg.fuel_ticks = [](void *user, const char *key) -> uint32_t {
+          ++*(unsigned *)user;
+          return strcmp(key, "m:ember") == 0 ? 72000u : 0u;
+      };
+      char err[256];
+      lce_script *s = lce_script_new(&api, nullptr, &cfg);
+      CHECK(s);
+      CHECK(run(s, R"lua(
+          assert(lce.fuel_ticks("m:ember") == 72000)
+          assert(lce.fuel_ticks("m:unknown") == nil)
+          assert(lce.fuel_ticks("") == nil)
+          assert(lce.fuel_ticks(string.rep("x", 64)) == nil)
+          assert(lce.fuel_ticks("m:ember" .. string.char(0) .. "suffix") == nil)
+          assert(not pcall(lce.fuel_ticks, 339))
+          assert(not pcall(lce.fuel_ticks))
+      )lua", err, sizeof err) == LCE_OK);
+      CHECK(reads == 2u);
+      lce_script_free(s);
+      s = lce_script_new(&api, nullptr, nullptr);
+      CHECK(s);
+      CHECK(run(s, "assert(lce.fuel_ticks('m:ember') == nil)", err, sizeof err) == LCE_OK);
+      lce_script_free(s);
+    }
+
     { lce_api a = api; a.register_feature = ffeature;
       lce_script *s = lce_script_new(&a, nullptr, nullptr); CHECK(s); char err[256];
       CHECK(run(s, "local ok, rc = lce.register_feature{key='m:ore', kind=1, block='m:ruby_ore', block2='minecraft:stone', size=8, per_chunk=4, min_y=5, max_y=60, rarity=2, biomes={'minecraft:plains','minecraft:forest'}}; assert(ok and rc==0)", err, sizeof err) == LCE_OK);
@@ -767,6 +795,34 @@ int main() {
       lce_script_free(s);
     }
 #endif
+
+    { lce_script_config cfg{};
+      cfg.brewing_result = +[](void *, const char *input, const char *reagent, const char *) -> const char * {
+          return !strcmp(input, "minecraft:awkward") && !strcmp(reagent, "minecraft:stick") ? "m:haste" : nullptr;
+      };
+      lce_script *s = lce_script_new(&api, nullptr, &cfg); CHECK(s);
+      char err[256];
+      CHECK(run(s,
+        "local input, reagent = 'minecraft:awkward', 'minecraft:stick'\n"
+        "local output, form = lce.brewing_result(input, reagent)\n"
+        "assert(output == 'm:haste' and form == 'drink')\n"
+        "output, form = lce.brewing_result(input, reagent, 'lingering')\n"
+        "assert(output == 'm:haste' and form == 'lingering')\n"
+        "assert(lce.brewing_result(input, 'minecraft:coal') == nil)\n"
+        "assert(not pcall(lce.brewing_result, input, reagent, 'arrow'))\n"
+        "assert(not pcall(lce.brewing_result, input, reagent, 'drink' .. string.char(0)))\n"
+        "assert(not pcall(lce.brewing_result, input, reagent .. string.char(0)))\n"
+        "assert(not pcall(lce.brewing_result, input, 280))\n"
+        "assert(not pcall(lce.brewing_result, string.rep('a',64), reagent))\n"
+        "assert(not pcall(lce.register_brewing, {key='m:brew', input=input, reagent=reagent}))\n"
+        "local ok = lce.register_brewing{key='m:brew', input=input, reagent=reagent, output='m:haste'}\n"
+        "assert(not ok)\n", err, sizeof err) == LCE_OK);
+      lce_script_free(s);
+      s = lce_script_new(&api, nullptr, nullptr); CHECK(s);
+      CHECK(run(s, "assert(lce.brewing_result('minecraft:awkward', 'minecraft:stick') == nil)",
+                err, sizeof err) == LCE_OK);
+      lce_script_free(s);
+    }
 
     // ---- 3. sandbox escapes: io/os/debug/package/require/loadfile all absent ----
     { lce_script *s = lce_script_new(&api, nullptr, nullptr); CHECK(s);

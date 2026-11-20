@@ -35,11 +35,15 @@ typedef struct {
     size_t memory_cap;        /* bytes; 0 => default 16 MiB */
     uint64_t step_budget;     /* instructions per VM lifetime; 0 => default 20,000,000 */
     uint32_t hook_interval;   /* count-hook granularity; 0 => 1000 */
+    /* Returns a committed custom mix's potion key, or NULL. */
+    const char *(*brewing_result)(void *host_user, const char *input, const char *reagent, const char *form);
     /* Event callbacks registered by the script are delivered through the host's
      * event bus. The host supplies the thunk that forwards lce_event payloads
      * into lua_call_event(). NULL disables script events. */
     void *host_user;
     void (*on_log)(void *host_user, lce_log_level level, const char *msg);
+    /* Published SDK furnace fuel duration. Zero means no entry is available. */
+    uint32_t (*fuel_ticks)(void *host_user, const char *item_key);
 } lce_script_config;
 
 /* Create a sandboxed VM bound to one mod's api+ctx. Returns NULL on OOM or bad

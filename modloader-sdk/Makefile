@@ -11,8 +11,10 @@ CORE = loader/package.cpp loader/ledger.cpp loader/loader.cpp loader/ext.cpp
 ITEMS195 = modules/items195/items.cpp modules/items195/recipes.cpp modules/items195/furnace.cpp modules/items195/effects.cpp modules/items195/adapter.cpp
 PKGS = build/pkg/newretail/mod.lcm build/pkg/allcontent/mod.lcm build/pkg/retailall/mod.lcm build/pkg/rubyretail/mod.lcm build/pkg/rubymod/mod.lcm build/pkg/gem/mod.lcm build/pkg/rubytools/mod.lcm build/pkg/orphan/mod.lcm build/pkg/badver/mod.lcm build/pkg/blockstates/mod.lcm build/pkg/throwables/mod.lcm build/pkg/boats/mod.lcm build/pkg/shapes/mod.lcm build/pkg/fueltest/mod.lcm build/pkg/luafuel/mod.lcm
 PKGS += build/pkg/luamobs/mod.lcm build/pkg/luatexture/mod.lcm build/pkg/luaworldgen/mod.lcm build/pkg/potiononly/mod.lcm
+PKGS += build/pkg/luabrewing/mod.lcm
 
 PKGS += build/pkg/fuelroute/mod.lcm
+PKGS += build/pkg/luafuelstatus/mod.lcm
 
 all: test
 
@@ -25,8 +27,12 @@ build/pkg/rubymod/mod.lcm: tools/lce_port.py tools/lce_modpack.py tools/port_com
 build/pkg/gem/mod.lcm: tools/lce_port.py tools/lce_modpack.py tools/port_compat.py $(shell find examples/bedrock-sapphire -type f)
 	python3 tools/lce_port.py bedrock examples/bedrock-sapphire/BP examples/bedrock-sapphire/RP build/port/gem
 	python3 tools/lce_modpack.py build build/port/gem build/pkg
+build/pkg/luabrewing/mod.lcm: examples/lua-brewing/mod.json examples/lua-brewing/scripts/main.lua tools/lce_modpack.py tools/lce_ext_schema.py
+	python3 tools/lce_modpack.py build examples/lua-brewing build/pkg
 build/pkg/fuelroute/mod.lcm: tests/fixtures/fuelroute/mod.json tools/lce_modpack.py tools/lce_ext_schema.py
 	python3 tools/lce_modpack.py build --profile retail195-experimental-fuel tests/fixtures/fuelroute build/pkg
+build/pkg/luafuelstatus/mod.lcm: examples/lua-fuel-status/mod.json examples/lua-fuel-status/scripts/main.lua tools/lce_modpack.py tools/lce_ext_schema.py
+	python3 tools/lce_modpack.py build --profile retail195-experimental-fuel examples/lua-fuel-status build/pkg
 build/pkg/%/mod.lcm: tests/fixtures/%/mod.json $(wildcard tests/fixtures/*/scripts/*.lua) $(wildcard tests/fixtures/*/textures/*.png) tools/lce_modpack.py tools/lce_ext_schema.py
 	python3 tools/lce_modpack.py build tests/fixtures/$* build/pkg
 

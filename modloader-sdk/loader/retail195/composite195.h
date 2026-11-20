@@ -126,6 +126,7 @@ typedef struct lce195c {
     uint32_t late_held;                      /* 1 while lce195c_phase_late runs */
     uint32_t world_entry;                    /* 1 allowed (default), 0 blocked */
     uint32_t fuel_count;                     /* validated declarations awaiting late startup */
+    uint32_t fuel_query_ready;               /* release-published after native fuel activation */
     uint32_t has_blocks, has_entities, feature_count, structure_count;
     lce195c_feature features[LCE195C_MAX_FEATURES];
     lce_wg195_structure structures[LCE195C_MAX_STRUCTURES];

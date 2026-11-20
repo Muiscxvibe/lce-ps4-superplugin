@@ -1,0 +1,23 @@
+{
+  "format": 1,
+  "id": "luabrewing",
+  "name": "Lua Brewing Example",
+  "version": "1.0.0",
+  "scripts": {"main.lua": "scripts/main.lua"},
+  "potions": [
+    {
+      "key": "luabrewing:haste",
+      "name": "Potion of Haste",
+      "effects": [{"effect": "minecraft:haste", "duration": 600}],
+      "splash": 1,
+      "lingering": 1
+    },
+    {
+      "key": "luabrewing:haste_plus",
+      "name": "Potion of Greater Haste",
+      "effects": [{"effect": "minecraft:haste", "duration": 600, "amplifier": 1}],
+      "splash": 1,
+      "lingering": 1
+    }
+  ]
+}

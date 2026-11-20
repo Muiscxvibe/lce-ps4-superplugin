@@ -1003,7 +1003,9 @@ extern "C" int lce195c_phase_late(lce195c *c) {
         if (rc == 1) snprintf(e, sizeof e, "installed %u fuel(s)", table.count);
         else if (st == LCE_OK) snprintf(e, sizeof e, "attachment failed at %s", fuel->failed_step ? fuel->failed_step : "initial validation");
         mark(c, LCE195C_PH_FUEL, rc, e);
-        if (rc != 1) {
+        if (rc == 1) {
+            __atomic_store_n(&c->fuel_query_ready, 1u, __ATOMIC_RELEASE);
+        } else {
             c->world_entry = 0;
             logf(c, "LCE_SDK WORLD_ENTRY BLOCKED: custom fuel installation rc=%d", rc);
             if (rc < 0) result = -1; else if (result > 0) result = 0;
@@ -1127,9 +1129,23 @@ extern "C" int lce195c_event_sink(void *self, lce_event ev, const void *payload)
 }
 
 namespace {
+const char *script_brewing_result(void *user, const char *input, const char *reagent, const char *form) {
+    lce195c *c = (lce195c *)user;
+    return lce195_backend_brewing_result(&c->items, input, reagent, form);
+}
+
 void script_log(void *user, lce_log_level, const char *msg) {
     lce195c *c = (lce195c *)user;
     logf(c, "LCE_SDK script: %s", msg ? msg : "");
+}
+
+uint32_t script_fuel_ticks(void *user, const char *key) {
+    const lce195c *c = (const lce195c *)user;
+    if (!__atomic_load_n(&c->fuel_query_ready, __ATOMIC_ACQUIRE)) return 0;
+    const int32_t id = lce_loader_item_id(c->loader, key);
+    if (id <= 0 || id > 65535) return 0;
+    const auto *fuel = fuel195_lookup(fuel195_rt(), c->items.xenv.n.item_by_id((unsigned)id));
+    return fuel ? fuel->ticks : 0;
 }
 }  // namespace
 
@@ -1141,7 +1157,9 @@ extern "C" lce_status lce195c_script_runner(void *self, lce_loader *l, uint32_t 
     lce_script_config cfg;
     memset(&cfg, 0, sizeof cfg);
     cfg.memory_cap = 4u << 20;     // 4 MiB per mod on the console
+    cfg.brewing_result = script_brewing_result;
     cfg.host_user = c; cfg.on_log = script_log;
+    cfg.fuel_ticks = script_fuel_ticks;
     lce_script *s = lce_script_new(lce_loader_api(l), lce_loader_mod_ctx(l, mi), &cfg);
     if (!s) { set_err(err, cap, "Lua VM allocation failed"); return LCE_E_FULL; }
     char e[128] = {0};

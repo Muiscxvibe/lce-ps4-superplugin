@@ -731,6 +731,38 @@ static void scenario_potion_only_unwind() {
     CHECK_EQ(lce195c_phase_late(&g_comp), -1);  // completes the title pass without retrying publication
     CHECK_EQ(F<int32_t>(fx::B + LCE195E_RVA_POTION_COUNT), 44);
 }
+
+static void scenario_lua_brewing(bool refuse) {
+    image(); override_all();
+    g_xn.potion_by_id = fx::f_potion_by_id;
+    lce195c_test_override(LCE195C_PH_STRINGS, f_strings);
+    install("luabrewing");
+    boot();
+    CHECK_EQ(lce_loader_commit(g_l), LCE_OK);
+    const lce_mod_report *m = mod("luabrewing");
+    CHECK(m && m->state == LCE_MOD_LIVE);
+    if (!m || m->state != LCE_MOD_LIVE) return;
+    CHECK_EQ(g_comp.items.item_count, 0u);
+    CHECK_EQ(g_comp.items.brew_count, 2u);
+    constexpr const char *output = "Lua brewing chain: luabrewing:haste_plus (splash)";
+    lce_ev_tick tick{sizeof tick, 1};
+    lce195c_event_sink(&g_comp, LCE_EV_SERVER_TICK, &tick);
+    CHECK(!logged(output));
+    const uintptr_t vec = B + LCE195X_RVA_POTION_MIXES;
+    if (refuse) {
+        // Make the stock potion mix collide with the first Lua recipe.
+        uintptr_t first = Q(Q(vec + 8));
+        F<uintptr_t>(first) = fx::f_potion_by_id(4);
+        F<uintptr_t>(Q(first + 8) + 8) = g_reg[348];
+    }
+    const uint32_t stock = vec_len(vec);
+    CHECK_EQ(lce195c_phase_late(&g_comp), refuse ? 0 : 1);
+    CHECK_EQ(vec_len(vec), stock + (refuse ? 0u : 2u));
+    tick.tick++;
+    lce195c_event_sink(&g_comp, LCE_EV_SERVER_TICK, &tick);
+    CHECK(logged(output) == !refuse);
+}
+
 static void scenario_registries() {
     image(); override_all();
     g_xn.effect_by_id = fx::f_effect_by_id; g_xn.potion_by_id = fx::f_potion_by_id;   // on the console both are the retail byId
@@ -1048,20 +1080,22 @@ static void scenario_fuel_publish() {
     const auto *lua_inline = fuel195_lookup(fuel195_rt(), by_id((unsigned)lce_loader_item_id(g_l, "luafuel:inline")));
     CHECK(lua_inline && lua_inline->ticks == 2345);
     CHECK_EQ(lce195c_world_entry_allowed(&g_comp), 1);
+    CHECK_EQ(lce195c_event_sink(&g_comp, LCE_EV_WORLD_LOAD, nullptr), 0);
+    CHECK(logged("Lua fuel duration read from the committed table"));
 }
 
-static void scenario_fuelroute_stock_only() {
+static void stock_only_fuel_publication(const char *pack, bool scripted) {
     prepare_fuel_image();
     constexpr unsigned paper_id = 339;
     void *paper = fake_alloc(0xa0);
     item_ctor(paper);
     g_reg[paper_id] = (uintptr_t)paper;
-    install("fuelroute");
-    files["/data/lce-mods/fuelroute/enabled"] = {};
+    install(pack);
+    files[std::string("/data/lce-mods/") + pack + "/enabled"] = {};
     boot(true, true, true);
     CHECK_EQ(lce_loader_commit(g_l), LCE_OK);
     CHECK_EQ(lce_loader_mod_count(g_l), 1u);
-    const lce_mod_report *report = mod("fuelroute");
+    const lce_mod_report *report = mod(pack);
     CHECK(report && report->state == LCE_MOD_LIVE && report->items == 0u);
     const lce_plan *plan = lce_loader_plan(g_l);
     CHECK(plan && plan == g_comp.plan);
@@ -1084,7 +1118,15 @@ static void scenario_fuelroute_stock_only() {
     CHECK_EQ(fuel195_rt()->quick_move_slot, B + FUEL195_RVA_FURNACE_MENU_VT + FUEL195_VSLOT_QUICK_MOVE);
     CHECK_EQ(fuel195_rt()->hopper_slot, B + FUEL195_RVA_CONTAINER_VT + FUEL195_VSLOT_CONTAINER_CAN_PLACE);
     CHECK_EQ(lce195c_world_entry_allowed(&g_comp), 1);
+    if (scripted) {
+        CHECK_EQ(lce195c_script_count(&g_comp), 1u);
+        CHECK_EQ(lce195c_event_sink(&g_comp, LCE_EV_WORLD_LOAD, nullptr), 0);
+        CHECK(logged("minecraft:paper burns for 600 ticks; stock Coal entry = nil"));
+    }
 }
+
+static void scenario_fuelroute_stock_only() { stock_only_fuel_publication("fuelroute", false); }
+static void scenario_lua_fuel_query() { stock_only_fuel_publication("luafuelstatus", true); }
 
 static void scenario_fuel_install_failure() {
     image(); override_all(); install("fueltest"); boot(true, true, true);
@@ -1364,6 +1406,7 @@ int main(int argc, char **argv) {
     run("fuel capability binding", scenario_fuel_binding);
     run("fuel startup publication", scenario_fuel_publish);
     run("fuelroute stock-only publication", scenario_fuelroute_stock_only);
+    run("Lua fuel query example", scenario_lua_fuel_query);
     run("fuel installation failure blocks entry", scenario_fuel_install_failure);
     run("full startup order", scenario_full);
     run("renderers missing -> world entry blocked", scenario_renderers_fail);
@@ -1377,6 +1420,8 @@ int main(int argc, char **argv) {
     run("potion-only clean title fallback", scenario_potion_only_fallback);
     run("potion-only uncertain publication remains one-shot", scenario_potion_only_uncertain);
     run("potion-only native unwind closes startup lease", scenario_potion_only_unwind);
+    run("Lua brewing queries only installed mixes", +[] { scenario_lua_brewing(false); });
+    run("Lua brewing ignores refused native mixes", +[] { scenario_lua_brewing(true); });
     run("effects, potions, enchantments, biomes, custom audio", scenario_registries);
     run("Lua biome and structure world generation", scenario_lua_worldgen);
     run("shipping publisher refused the built items -> items refused", scenario_publisher_refused);

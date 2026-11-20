@@ -1,0 +1,10 @@
+{
+  "format": 1,
+  "id": "luafuelstatus",
+  "name": "Lua Fuel Status",
+  "version": "1.0.0",
+  "fuels": [
+    {"item": "minecraft:paper", "burn_ticks": 600}
+  ],
+  "scripts": {"main.lua": "scripts/main.lua"}
+}

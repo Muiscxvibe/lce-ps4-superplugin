@@ -145,6 +145,7 @@ typedef struct lce195_backend {
     lce195x_recipe recipes[LCE195_SDK_MAX_RECIPES];
     lce195x_smelt smelts[LCE195_SDK_MAX_SMELTS];
     lce195x_brew brews[LCE195_SDK_MAX_BREWS];
+    const lce_brew_desc *brew_descs[LCE195_SDK_MAX_BREWS];
     char last_error[160];
 } lce195_backend;
 
@@ -164,6 +165,8 @@ uint32_t lce195_backend_status(const lce195_backend *b);
 /* Late startup phase (startup_held()==1): smelting then brewing. 1 done (or
  * nothing to do), 0 refused before any write, -1 uncertain. */
 int lce195_backend_publish_late(lce195_backend *b);
+/* Lookup an installed SDK potion mix. Returns a plan-owned key, or NULL. */
+const char *lce195_backend_brewing_result(const lce195_backend *b, const char *input, const char *reagent, const char *form);
 /* The name dispatcher installed in slot +0x108 of every SDK item's private vtable. */
 void *lce195_sdk_name_dispatch(void *out, void *item, void *stack);
 /* Exposed for the composite: checks (backend interface signature) and the
