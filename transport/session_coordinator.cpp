@@ -2,6 +2,8 @@
 #include "socket_native_factory.hpp"
 #include <string.h>
 
+extern "C" int lce_sdk_world_entry_allowed(void) __attribute__((weak));
+
 namespace lce_session_coordinator {
 Coordinator *Coordinator::active_=nullptr;
 
@@ -344,6 +346,9 @@ bool Coordinator::commit_game_thread(uint64_t gen) {
         // cancel() already queued worker cleanup for this phase.
         return false;
     }
+    // Fail before creating native players or dispatching the world-start worker.
+    if (lce_sdk_world_entry_allowed && !lce_sdk_world_entry_allowed())
+        return defer_transport_cleanup(gen,Error::StartTransitionFailed);
     if (!transport_.connection.reader.has_id || transport_.state!=LCE_SESSION_ACTIVE ||
         !lce_external_players::prepare_native(players_,sqr_manager_,user_index_,local_id_,ops_.retire_socket))
         return defer_transport_cleanup(gen,Error::NativePlayerSetupFailed);

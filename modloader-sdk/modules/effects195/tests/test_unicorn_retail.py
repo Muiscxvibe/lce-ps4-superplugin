@@ -21,9 +21,11 @@ from uc_common import *
 
 HERE = Path(__file__).resolve().parent
 SO = HERE.parent / 'build' / 'host' / 'libeffects195_uc.so'
+ITEMS = HERE.parents[1] / 'items195'
 SO.parent.mkdir(parents=True, exist_ok=True)
 subprocess.run(['g++', '-std=c++17', '-O1', '-g', '-shared', '-fPIC', '-Wall', '-Wextra', '-Werror', '-DLCE195E_HOST',
-                str(HERE.parent / 'effects195.cpp'), str(HERE / 'uc_shim.cpp'), '-o', str(SO)], check=True)
+                str(HERE.parent / 'effects195.cpp'), str(ITEMS / 'effects.cpp'), str(ITEMS / 'items.cpp'),
+                str(HERE / 'uc_shim.cpp'), '-o', str(SO)], check=True)
 lib = ctypes.CDLL(str(SO))
 
 checks = fails = 0
@@ -266,7 +268,23 @@ check(wtext(out + 0x40) == 'gem' and wtext(out + 0x18) == 'glow_potion', 'regist
 # Exercise the exact ItemInstance -> tagged Creative wrapper -> selection path
 # used by the plugin's existing Lucky named-stack and potion variant providers.
 from uc_creative_potions import check_creative_potions
-check_creative_potions(u, check, [(p0, 'gem:glow_potion', psids[:4]), (p1, 'gem:base', psids[6:10])])
+
+class Brew(ctypes.Structure):
+    _fields_ = [('from_potion', ctypes.c_int32), ('to_potion', ctypes.c_int32),
+                ('reagent', U64), ('reagent_aux', ctypes.c_int32)]
+
+
+brew_grow = ctypes.CFUNCTYPE(None, U64, U64)(lambda vec, n: uc(0x583020, vec, n))
+brew_fns = (V * 4)(*[ctypes.cast(f, V) for f in (F_alloc, F_release, F_potion_by_id, brew_grow)])
+lib.shim_publish_brews.argtypes = [ctypes.POINTER(V), ctypes.POINTER(V), ctypes.POINTER(Brew), ctypes.c_uint]
+
+
+def publish_brews(defs):
+    records = (Brew * len(defs))(*(Brew(*fields) for fields in defs))
+    return lib.shim_publish_brews(brew_fns, mem, records, len(defs))
+
+
+check_creative_potions(u, check, [(p0, 'gem:glow_potion', psids[:4]), (p1, 'gem:base', psids[6:10])], publish_brews)
 
 # ---- 6. refusal on the live image: id already taken / potion key already registered
 rc = lib.shim_publish_effects(1, (ctypes.c_char_p * 1)(b'gem:dupe'), (ctypes.c_int32 * 1)(70), (ctypes.c_uint32 * 1)(1),

@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
 set -euo pipefail
+plugin_source=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
 crash="${LCE_CRASHLOG_BUILD:-/home/codey/minecraft-lce-work/ps4-metadata-snapshot/crashlog-build}"
 r72="${LCE_R72:-/home/codey/minecraft-lce-work/r72-session-candidate}"
 cd "$r72/loader/super_content_steel_nbt_save_195"
@@ -133,6 +134,8 @@ clang++ "${flags[@]}" "${cxx[@]}" -I"$debug" -I"$transport" "${debug_diag[@]}" -
 # Rebuild the current NBT presenter rather than using a stale object.
 clang++ "${flags[@]}" "${cxx[@]}" -Wno-missing-field-initializers "${debug_diag[@]}" -I"$root/shader-re/opengnm/include" -c "$root/menu-render-bridge/nuklear_presenter.cpp" -o "$crash/build/tabs_114.o"
 lcesdk=${LCE_SDK_ROOT:-/home/codey/minecraft-lce-work/modloader-sdk}
+clang++ "${flags[@]}" "${cxx[@]}" -I"$legacy" -I"$lcesdk" \
+    -c "$plugin_source/world_entry195.cpp" -o "$crash/build/lce_world_entry195.o"
 viewport_flags=()
 waypoint_objects=()
 if [[ ${LCE_EXPERIMENTAL_VIEWPORT_TINT:-0} == 1 ]]; then

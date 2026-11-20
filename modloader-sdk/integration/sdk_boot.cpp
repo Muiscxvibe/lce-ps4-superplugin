@@ -51,6 +51,9 @@ static_assert(offsetof(lce195_view, tick) == offsetof(mc195_lucky_server_view, t
    links unchanged. */
 /* r72_world_bind195.cpp: set_block / spawn / loaded / explode through the r72 Lucky Block world helpers. */
 extern "C" const void *lce_sdk_world_ops(uintptr_t base, const lce_plan *plan);   /* lce195_world_ops* (see services_glue195.cpp) */
+extern "C" int lce_sdk_world_entry_allowed(void);
+extern "C" int lce195_world_entry_guard_arm(uintptr_t, void (*)(const char *)) __attribute__((weak));
+extern "C" int lce195_world_entry_guard_retire(void) __attribute__((weak));
 extern "C" int lce_netsync_configure_from_loader(const lce_loader *, int, void (*)(const char *)) __attribute__((weak));
 
 namespace {
@@ -64,6 +67,7 @@ uintptr_t g_base;
 void (*g_log)(const char *);
 unsigned g_boot_state;        // 0 none, 1 booting, 2 armed, 3 nothing to do, 4 refused, 5 uncertain
 unsigned g_events_ready, g_late_done;
+bool g_world_entry_guard, g_world_entry_guard_uncertain;
 uint32_t g_viewport_tint;
 #if defined(LCE_WAYPOINT_PACKAGES)
 constexpr unsigned kLayerWaypointLimit = 64;
@@ -77,6 +81,11 @@ void logline(const char *line) {
     snprintf(buf, sizeof buf, "%s\n", line);
     g_log(buf);
 }
+void retire_world_entry_guard() {
+    if (g_world_entry_guard && lce195_world_entry_guard_retire() <= 0)
+        logline("LCE_SDK WORLD_ENTRY: native call restoration failed");
+}
+bool needs_world_entry_guard() { return g_composite.has_entities || g_composite.fuel_count; }
 void log_cb(void *, const char *line) { logline(line); }
 int crafting_held(void *) { return lce195x_recipe_provider_status(LCE195_SDK_PROVIDER) == 1u; }
 
@@ -139,6 +148,18 @@ extern "C" int lce_sdk_boot(uintptr_t attested_base, void (*log)(const char *)) 
     g_log = log;
     g_base = attested_base;
 
+    // Establish the native gate before exposing capabilities that can require it.
+    const int guard = lce195_world_entry_guard_arm && lce195_world_entry_guard_retire
+        ? lce195_world_entry_guard_arm(attested_base, g_log) : 0;
+    if (guard < 0) {
+        g_world_entry_guard_uncertain = true;
+        logline("LCE_SDK WORLD_ENTRY: uncertain native guard publication");
+        __atomic_store_n(&g_boot_state, 5u, __ATOMIC_RELEASE);
+        return -1;
+    }
+    g_world_entry_guard = guard == 1;
+    if (!g_world_entry_guard) logline("LCE_SDK WORLD_ENTRY: guard unavailable; custom entities and fuels disabled");
+
     // events195 first: its capability bits decide what the loader accepts.
     static lce195_host host;
     memset(&host, 0, sizeof host);
@@ -158,7 +179,7 @@ extern "C" int lce_sdk_boot(uintptr_t attested_base, void (*log)(const char *)) 
     lce195x_natives_bind(&xn, attested_base);
     b.items = &xn;
 #if defined(LCE_EXPERIMENTAL_FUEL)
-    b.fuel = fuel195_ps4_ops();
+    if (g_world_entry_guard) b.fuel = fuel195_ps4_ops();
 #endif
     static b195_natives bn;
     b195_natives_bind(&bn, attested_base);
@@ -166,7 +187,7 @@ extern "C" int lce_sdk_boot(uintptr_t attested_base, void (*log)(const char *)) 
     b.blocks_mem = b195_memory{nullptr, lce_ps4_mem_read, lce_ps4_mem_write, cas_word, thread_id, attested, unused, unused, unused, unused4};
     static le195_natives en;
     le195_natives_bind(&en, attested_base);
-    b.entities = &en;
+    b.entities = g_world_entry_guard ? &en : nullptr;
     b.entities_mem = le195_memory{nullptr, lce_ps4_mem_read, lce_ps4_mem_write};
     static lce_wg195_natives wn;
     lce_wg195_natives_bind(&wn, attested_base);
@@ -227,7 +248,11 @@ extern "C" int lce_sdk_boot(uintptr_t attested_base, void (*log)(const char *)) 
     lce_ps4_host_ops(&cfg.host, log_cb, nullptr);
 
     g_loader = lce_loader_create(&cfg);
-    if (!g_loader) { __atomic_store_n(&g_boot_state, 4u, __ATOMIC_RELEASE); return 0; }
+    if (!g_loader) {
+        __atomic_store_n(&g_boot_state, 4u, __ATOMIC_RELEASE);
+        retire_world_entry_guard();
+        return 0;
+    }
     lce195c_attach(&g_composite, g_loader);
     lce_loader_set_script_runner(g_loader, lce195c_script_runner, &g_composite);
     lce_loader_discover(g_loader);
@@ -270,6 +295,7 @@ extern "C" int lce_sdk_boot(uintptr_t attested_base, void (*log)(const char *)) 
     }
 #endif
     __atomic_store_n(&g_boot_state, final_state, __ATOMIC_RELEASE);
+    if ((final_state != 2u || !needs_world_entry_guard()) && lce_sdk_world_entry_allowed()) retire_world_entry_guard();
     return final_state == 2u ? 1 : final_state == 5u ? -1 : 0;
 }
 
@@ -344,6 +370,7 @@ extern "C" void lce_sdk_ui_tick(void *) {
     int rc = lce195c_phase_late(&g_composite);
     if (rc == 0 && lce195c_phase_state(&g_composite, LCE195C_PH_SMELT_BREW) == LCE195C_WAITING) return;   // a world is up: retry later
     __atomic_store_n(&g_late_done, 1u, __ATOMIC_RELEASE);
+    if (needs_world_entry_guard() && lce_sdk_world_entry_allowed()) retire_world_entry_guard();
     char line[320];
     lce195c_status_line(&g_composite, line, sizeof line);
     logline(line);
@@ -371,7 +398,13 @@ extern "C" int lce_sdk_terrain_detach(int (*held)(void)) {
     return lce195c_terrain_detach(&g_composite, &lease);
 }
 
-extern "C" int lce_sdk_world_entry_allowed(void) { return lce195c_world_entry_allowed(&g_composite); }
+extern "C" int lce_sdk_world_entry_allowed(void) {
+    const unsigned boot = __atomic_load_n(&g_boot_state, __ATOMIC_ACQUIRE);
+    if (boot == 1u) return 0;
+    if (boot == 5u) return !g_world_entry_guard_uncertain && !needs_world_entry_guard();
+    if (boot != 2u || !needs_world_entry_guard()) return 1;
+    return __atomic_load_n(&g_late_done, __ATOMIC_ACQUIRE) && lce195c_world_entry_allowed(&g_composite);
+}
 
 /* Shared-scope subscriber (super.cpp adds it to Mc195SharedScope). */
 extern "C" int lce_sdk_events_wanted(void) {

@@ -11,7 +11,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[2] / 'strings195' / 'tes
 from uc195 import Machine
 
 
-def check_creative_potions(u, check, potions):
+def check_creative_potions(u, check, potions, publish_brews):
     # Reuse the existing exact Unicorn models for Jaguar AVX stores and PLT
     # imports that the ItemInstance and Item wrapper need.
     avx = Machine()
@@ -51,9 +51,9 @@ def check_creative_potions(u, check, potions):
         run_range(u, begin, end, stubs=stubs)
         items.append((item_id, item, vtable))
 
-    def make_stack(item):
+    def make_stack(item, aux=0):
         obj = alloc(u, 0xa8)
-        native(0x3b7720, obj, item, 1, 0)
+        native(0x3b7720, obj, item, 1, aux)
         control = zalloc(24)
         wq(u, control, 0x1214808)
         wd(u, control + 8, 1)
@@ -128,3 +128,65 @@ def check_creative_potions(u, check, potions):
             release(selected)
     check(q(u, group + 16) - q(u, group + 8) == 8 * len(items) * len(potions),
           'all stock item forms and distinct potion identities coexist in the same private tab')
+
+    # Boot the real PotionBrewing recipe table. The potion Items are the
+    # native objects above. The unrelated stock Ingredients only need distinct
+    # Item identities for these paths. Populate the fish variant id as well.
+    for glob in (0x1417c98, 0x1417d48, 0x1417b20, 0x1417cc8, 0x1417c68, 0x1417bc8,
+                 0x1417cd8, 0x1417be8, 0x1417bd0, 0x1417cf8, 0x1417cc0, 0x1417c88,
+                 0x1417cd0, 0x1417ed0, 0x1417e80, 0x14179c0, 0x1417cb8):
+        obj = alloc(u, 0xa0)
+        native(0x354d80, obj)
+        wq(u, glob, obj)
+    variant = zalloc(8)
+    wd(u, variant, 3)
+    wq(u, 0x1416650, variant)
+    for glob, item in zip((0x14178d8, 0x1417ca0, 0x1417ca8), (drinks, items[1][1], items[2][1])):
+        wq(u, glob, item)
+    native(0x5675b0)  # bind stock Potion globals from the registry
+    native(0x562e30)
+
+    vec = 0x142e948
+    begin, end = q(u, vec + 8), q(u, vec + 16)
+    stock = bytes(u.mem_read(begin, end - begin))
+    first = q(u, begin)
+    stock_from, stock_to = q(u, first), q(u, first + 16)
+    stock_reagent = q(u, q(u, first + 8) + 8)
+    check(len(stock) > 8 and stock_from and stock_to and stock_reagent,
+          'retail PotionBrewing finished initialising stock mixes')
+
+    reagent_item = alloc(u, 0xa0)
+    native(0x354d80, reagent_item)
+    reagent = make_stack(reagent_item)
+    check(native(0x561b70, reagent) & 0xff == 0, 'new Item is initially rejected by the ingredient check')
+
+    def potion_stack(item, potion):
+        stack = zalloc(16)
+        native(0x562cd0, stack, make_stack(item), potion)
+        return stack
+
+    def mix(item, source, ingredient, expected):
+        before = potion_stack(item, source)
+        result = zalloc(16)
+        check(native(0x5623e0, before, ingredient) & 0xff == 1,
+              'retail potion-mix check finds the recipe')
+        check(native(0x562740, result, ingredient, before) == result and
+              q(u, q(u, result) + 0x28) == item and native(0x562670, result) == expected,
+              'retail brewing returns the exact tagged potion in the original item form')
+        release(result)
+        release(before)
+
+    stock_pair = make_stack(stock_reagent, q(u, q(u, first + 8) + 16) & 0xffffffff)
+    mix(drinks, stock_from, stock_pair, stock_to)
+    check(publish_brews([(4, 44, reagent_item, -1), (44, 43, reagent_item, -1)]) == 1,
+          'SDK publishes the entire two-step chain into the retail vector')
+    begin, end = q(u, vec + 8), q(u, vec + 16)
+    check(end - begin == len(stock) + 16 and bytes(u.mem_read(begin, len(stock))) == stock,
+          'stock mix pointers are preserved in their original order')
+    check(native(0x561b70, reagent) & 0xff == 1, 'the retail ingredient check now accepts the custom Item')
+    mix(drinks, stock_from, stock_pair, stock_to)
+    for _, item, _ in items[:3]:
+        mix(item, native(0x55e560, 4), reagent, potions[1][0])
+        mix(item, potions[1][0], reagent, potions[0][0])
+    release(stock_pair)
+    release(reagent)

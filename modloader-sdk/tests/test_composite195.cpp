@@ -82,11 +82,15 @@ static void shaped_ctor(void *r, int w, int h, void **cells, void *res, int g) {
 static void shapeless_ctor(void *r, void *res, void *vec, int g) { uintptr_t x = (uintptr_t)r; F<uintptr_t>(x) = B + LCE195X_RVA_SHAPELESS_VT; F<int>(x + 0x1c) = g; F<uintptr_t>(x + 0x20) = (uintptr_t)res; F<uintptr_t>(x + 0x28) = (uintptr_t)vec; }
 static unsigned id_of(uintptr_t item) { for (auto &kv : g_reg) if (kv.second == item) return kv.first; return 0; }
 static unsigned output_key(void *s) { uintptr_t x = (uintptr_t)s; return (id_of(Q(x + 0x28)) << 16) | F<unsigned>(x + 0x3c); }
-static void vec_grow(uintptr_t v, int) {
+static void mix_vec_grow(uintptr_t v, uint64_t entries) {
     uintptr_t b = Q(v + 8), e = Q(v + 16), c = Q(v + 24); size_t n = (e - b) / 8, cap = (c - b) / 8, nc = cap ? cap * 2 : 4;
+    if (cap - n >= entries) return;
+    if (nc < n + entries) nc = n + entries;
     uintptr_t nb = (uintptr_t)fake_alloc(nc * 8); if (n) memcpy((void *)nb, (void *)b, n * 8);
     F<uintptr_t>(v + 8) = nb; F<uintptr_t>(v + 16) = nb + n * 8; F<uintptr_t>(v + 24) = nb + nc * 8;
 }
+static void fake_mix_free(void *) {}
+static void vec_grow(uintptr_t v, int entries) { mix_vec_grow(v, entries); }
 static void list_init(uintptr_t map) { uintptr_t h = (uintptr_t)fake_alloc(0x20); F<uintptr_t>(h) = h; F<uintptr_t>(h + 8) = h; F<uintptr_t>(map + 8) = h; F<uint64_t>(map + 0x10) = 0; }
 static uintptr_t list_front(uintptr_t map, size_t node) {
     uintptr_t h = Q(map + 8), n = (uintptr_t)fake_alloc(node), first = Q(h);
@@ -235,7 +239,7 @@ static void image() {
     memset(&g_xn, 0, sizeof g_xn);
     g_xn = lce195x_natives{fake_alloc, fake_alloc, fake_wstring, by_id, item_ctor, set_max_damage, pick, axe, shovel, sword, armour, food, food_effect, mei_ctor,
                            stack_ctor, shaped_ctor, shapeless_ctor, output_key, recipe_bucket, vec_grow, vec_grow, {furnace_map, furnace_map, furnace_map},
-                           effect_by_id, potion_by_id, vec_grow};
+                           effect_by_id, potion_by_id, mix_vec_grow, fake_mix_free};
     // Blocks/entities/worldgen natives only have to be bound for configure(); their publish steps are recorded fakes.
     void **p = (void **)&g_bn; for (size_t i = 0; i < sizeof g_bn / sizeof(void *); ++i) p[i] = (void *)&dummy;
     p = (void **)&g_en; for (size_t i = 0; i < sizeof g_en / sizeof(void *); ++i) p[i] = (void *)&dummy;

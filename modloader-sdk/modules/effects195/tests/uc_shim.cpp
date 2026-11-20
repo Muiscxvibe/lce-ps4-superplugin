@@ -1,6 +1,7 @@
 // Test-only shim: lets tests/test_unicorn_retail.py drive the real effects195
 // publishers (this .so) with natives that execute the retail image in Unicorn.
 #include "../effects195.h"
+#include "../../items195/items195.h"
 #include <string.h>
 
 static_assert(sizeof(lce195e_natives) == 13 * sizeof(void *), "natives layout");
@@ -70,5 +71,19 @@ uint64_t shim_potion_record(int i, int field) {
     if (field == 0) return (uint64_t)(int64_t)r.id;
     if (field == 1) return r.object;
     return r.mei[field - 2];
+}
+// Run the SDK brewing publisher against the same zero-based retail image.
+int shim_publish_brews(void *const fns[4], void *const mem[3], const lce195x_brew *defs, unsigned count) {
+    lce195x_env brew{};
+    brew.n.alloc = reinterpret_cast<decltype(brew.n.alloc)>(fns[0]);
+    brew.n.mix_free = reinterpret_cast<decltype(brew.n.mix_free)>(fns[1]);
+    brew.n.potion_by_id = reinterpret_cast<decltype(brew.n.potion_by_id)>(fns[2]);
+    brew.n.mix_vec_grow = reinterpret_cast<decltype(brew.n.mix_vec_grow)>(fns[3]);
+    brew.m.read = reinterpret_cast<decltype(brew.m.read)>(mem[0]);
+    brew.m.write = reinterpret_cast<decltype(brew.m.write)>(mem[1]);
+    brew.m.held = reinterpret_cast<decltype(brew.m.held)>(mem[2]);
+    lce195x_brew_publisher pub{};
+    pub.env = &brew;
+    return lce195x_brew_publish(&pub, defs, count);
 }
 }

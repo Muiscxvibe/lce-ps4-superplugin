@@ -94,7 +94,8 @@ extern "C" {
 #define LCE195X_RVA_EFFECT_BY_ID     0x490d60u  /* MobEffect::byId(int) -> registry 0x14195c8 vt+0x40, null if out of range */
 #define LCE195X_RVA_POTION_BY_ID     0x55e560u  /* Potion::byId(int) -> registry 0x142e938 vt+0x40 */
 #define LCE195X_RVA_POTION_MIXES     0x142e948u /* vector<Mix*> object: +8 begin, +0x10 end, +0x18 cap */
-#define LCE195X_RVA_MIX_VEC_GROW     0x583020u  /* grow(vec, 1), as 0x563450 */
+#define LCE195X_RVA_MIX_VEC_GROW     0x583020u  /* reserve space for n more pointers */
+#define LCE195X_RVA_MIX_FREE         0xe6cfb0u  /* operator delete(void*) */
 #define LCE195X_RVA_MIX_PREDICATE_VT 0x12a62a8u /* PotionBrewing::ItemInstancePredicate {vt, Item*, int aux} 0x18 */
 #define LCE195X_RVA_EFFECT_REGISTRY  0x14195c8u
 #define LCE195X_RVA_ENCHANT_REGISTRY 0x1415448u
@@ -137,7 +138,8 @@ typedef struct lce195x_natives {
     /* effects / brewing */
     uintptr_t (*effect_by_id)(int id);
     uintptr_t (*potion_by_id)(int id);
-    void (*mix_vec_grow)(uintptr_t vec, int n);
+    void (*mix_vec_grow)(uintptr_t vec, uint64_t n);
+    void (*mix_free)(void *object);
 } lce195x_natives;
 
 /* Memory access with protection checks; held() is 1 while the caller owns the
@@ -324,7 +326,7 @@ lce_status lce195x_check_ext(uint32_t type, const void *desc, char *err, uint32_
 uint32_t lce195x_capabilities(void);
 
 typedef struct lce195x_brew {
-    int32_t from_potion, to_potion;   /* stock potion ids (lce195x_stock_potion_id) */
+    int32_t from_potion, to_potion;   /* retail Potion::byId ids (stock or registered SDK potions) */
     uintptr_t reagent;                /* Item* */
     int32_t reagent_aux;              /* -1 any (stock uses -1) */
 } lce195x_brew;

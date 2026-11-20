@@ -19,7 +19,20 @@ alignas(16) static uint8_t g_heap[1 << 22];
 static size_t g_used;
 static unsigned g_allocs;
 
-static void *fake_alloc(size_t n) { n = (n + 15) & ~(size_t)15; if (g_used + n > sizeof g_heap) return nullptr; void *p = g_heap + g_used; g_used += n; memset(p, 0, n); ++g_allocs; return p; }
+static unsigned g_fail_alloc_at = UINT32_MAX;
+static unsigned g_mix_frees;
+
+static void *fake_alloc(size_t n) {
+    n = (n + 15) & ~(size_t)15;
+    if (g_allocs == g_fail_alloc_at || g_used + n > sizeof g_heap) return nullptr;
+    void *p = g_heap + g_used;
+    g_used += n;
+    memset(p, 0, n);
+    ++g_allocs;
+    return p;
+}
+
+static void fake_mix_free(void *) { ++g_mix_frees; }
 static uintptr_t Q(uintptr_t a) { return *(uintptr_t *)a; }
 template <class T> static T &F(uintptr_t a) { return *(T *)a; }
 static void fake_wstring(void *dst, const uint16_t *u, uint64_t n) {
@@ -65,12 +78,15 @@ static void shapeless_ctor(void *r, void *res, void *vec, int g) {
 }
 static unsigned id_of(uintptr_t item) { for (auto &kv : g_reg) if (kv.second == item) return kv.first; return 0; }
 static unsigned output_key(void *s) { uintptr_t x = (uintptr_t)s; return (id_of(Q(x + 0x28)) << 16) | F<unsigned>(x + 0x3c); }
-static void vec_grow(uintptr_t v, int) {
+static void mix_vec_grow(uintptr_t v, uint64_t entries) {
     uintptr_t b = Q(v + 8), e = Q(v + 16), c = Q(v + 24); size_t n = (e - b) / 8, cap = (c - b) / 8, nc = cap ? cap * 2 : 4;
+    if (cap - n >= entries) return;
+    if (nc < n + entries) nc = n + entries;
     uintptr_t nb = (uintptr_t)fake_alloc(nc * 8); if (n) memcpy((void *)nb, (void *)b, n * 8);
     F<uintptr_t>(v + 8) = nb; F<uintptr_t>(v + 16) = nb + n * 8; F<uintptr_t>(v + 24) = nb + nc * 8;
 }
 // unordered_map list: head sentinel at [map+8], size [map+0x10]; node next +0, prev +8, key +0x10, value +0x18
+static void vec_grow(uintptr_t v, int entries) { mix_vec_grow(v, entries); }
 static void list_init(uintptr_t map) { uintptr_t h = (uintptr_t)fake_alloc(0x20); F<uintptr_t>(h) = h; F<uintptr_t>(h + 8) = h; F<uintptr_t>(map + 8) = h; F<uint64_t>(map + 0x10) = 0; }
 static uintptr_t list_insert_front(uintptr_t map, size_t node_size) {
     uintptr_t h = Q(map + 8), n = (uintptr_t)fake_alloc(node_size), first = Q(h);
@@ -139,7 +155,7 @@ int main() {
     env.base = B;
     env.n = lce195x_natives{fake_alloc, fake_alloc, fake_wstring, fake_by_id, item_ctor, set_max_damage, pick, axe, shovel, sword, armour, food, food_effect, mei_ctor,
                             stack_ctor, shaped_ctor, shapeless_ctor, output_key, recipe_bucket, vec_grow, vec_grow, {furnace_map, furnace_map, furnace_map},
-                            effect_by_id, potion_by_id, vec_grow};
+                            effect_by_id, potion_by_id, mix_vec_grow, fake_mix_free};
     env.m = lce195x_memory{nullptr, mem_read, mem_write, held};
 
     // ================= checks =================
@@ -551,7 +567,17 @@ int main() {
         for (int i = 0; i < 5; i++) ok[i] = {4 + i, 25, i ? (uintptr_t)ingot : ruby, -1};
         ok[1].from_potion = 5;
         bp = lce195x_brew_publisher{}; bp.env = &env;
+        const uintptr_t stock_begin = Q(vec + 8), stock_end = Q(vec + 16), stock_cap = Q(vec + 24);
+        g_fail_alloc_at = g_allocs + 3;  // the first mix is complete; allocating the second mix fails
+        CHECK_EQ(lce195x_brew_publish(&bp, ok, 5), 0);
+        g_fail_alloc_at = UINT32_MAX;
+        CHECK_EQ(g_mix_frees, 3); CHECK_EQ(bp.published, 0);
+        CHECK_EQ(Q(vec + 8), stock_begin); CHECK_EQ(Q(vec + 16), stock_end); CHECK_EQ(Q(vec + 24), stock_cap);
+        CHECK_EQ(Q(stock_begin), mix);
+        CHECK_EQ(lce195x_brew_publish(&bp, ok, 5), 0);  // same publisher stays one-shot
+        bp = lce195x_brew_publisher{}; bp.env = &env;
         CHECK_EQ(lce195x_brew_publish(&bp, ok, 5), 1);                                       // forces a vector grow (cap 4)
+        CHECK_EQ(bp.published, 5);
         CHECK_EQ((Q(vec + 16) - Q(vec + 8)) / 8, 6);
         CHECK_EQ(F<uintptr_t>(Q(vec + 8)), mix);
         uintptr_t m1 = F<uintptr_t>(Q(vec + 8) + 8);

@@ -401,6 +401,6 @@ extern "C" void lce195x_natives_bind(lce195x_natives *n, uintptr_t b) {
     BIND(stack_ctor, LCE195X_RVA_STACK_CTOR); BIND(shaped_ctor, LCE195X_RVA_SHAPED_CTOR); BIND(shapeless_ctor, LCE195X_RVA_SHAPELESS_CTOR);
     BIND(output_key, LCE195X_RVA_OUTPUT_KEY); BIND(recipe_bucket, LCE195X_RVA_RECIPE_BUCKET); BIND(recipe_vec_grow, LCE195X_RVA_RECIPE_VEC_GROW); BIND(stack_vec_grow, LCE195X_RVA_STACK_VEC_GROW);
     BIND(furnace_map[0], LCE195X_RVA_FURNACE_RESULT); BIND(furnace_map[1], LCE195X_RVA_FURNACE_XP); BIND(furnace_map[2], LCE195X_RVA_FURNACE_MASK);
-    BIND(effect_by_id, LCE195X_RVA_EFFECT_BY_ID); BIND(potion_by_id, LCE195X_RVA_POTION_BY_ID); BIND(mix_vec_grow, LCE195X_RVA_MIX_VEC_GROW);
+    BIND(effect_by_id, LCE195X_RVA_EFFECT_BY_ID); BIND(potion_by_id, LCE195X_RVA_POTION_BY_ID); BIND(mix_vec_grow, LCE195X_RVA_MIX_VEC_GROW); BIND(mix_free, LCE195X_RVA_MIX_FREE);
 #undef BIND
 }

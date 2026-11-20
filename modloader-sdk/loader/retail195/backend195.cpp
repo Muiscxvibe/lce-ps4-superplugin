@@ -413,7 +413,7 @@ extern "C" uint32_t lce195_backend_caps(const lce195_backend *b) {
     if (n.set_max_damage && n.armour_ctor) c |= LCE_CAP_ARMOUR;
     if (n.food_ctor) c |= LCE_CAP_FOOD;
     if (b->mem.startup_held && n.alloc && n.stack_ctor && n.furnace_map[0] && n.furnace_map[1] && n.furnace_map[2]) c |= LCE_CAP_SMELTING;
-    if (b->mem.startup_held && n.alloc && n.potion_by_id && n.mix_vec_grow && n.item_by_id) c |= LCE_CAP_BREWING;
+    if (b->mem.startup_held && n.alloc && n.potion_by_id && n.mix_vec_grow && n.mix_free && n.item_by_id) c |= LCE_CAP_BREWING;
     // Never FUEL, EFFECTS or ENCHANTS: items195 proves them impossible as data (STATUS.md).
     return c & (lce195x_capabilities() | LCE_CAP_ITEMS | LCE_CAP_TEXTURES | LCE_CAP_STRINGS | LCE_CAP_CREATIVE | LCE_CAP_CRAFT_TABS);
 }
@@ -425,7 +425,7 @@ extern "C" void lce195_backend_bind_items(lce195_backend *b, const lce195x_nativ
     TAKE(alloc); TAKE(alloc_array); TAKE(wstring); TAKE(item_by_id); TAKE(item_ctor); TAKE(set_max_damage);
     TAKE(pickaxe_ctor); TAKE(axe_ctor); TAKE(shovel_ctor); TAKE(sword_ctor); TAKE(armour_ctor); TAKE(food_ctor); TAKE(food_set_effect); TAKE(mei_ctor);
     TAKE(stack_ctor); TAKE(shaped_ctor); TAKE(shapeless_ctor); TAKE(output_key); TAKE(recipe_bucket); TAKE(recipe_vec_grow); TAKE(stack_vec_grow);
-    TAKE(furnace_map[0]); TAKE(furnace_map[1]); TAKE(furnace_map[2]); TAKE(effect_by_id); TAKE(potion_by_id); TAKE(mix_vec_grow);
+    TAKE(furnace_map[0]); TAKE(furnace_map[1]); TAKE(furnace_map[2]); TAKE(effect_by_id); TAKE(potion_by_id); TAKE(mix_vec_grow); TAKE(mix_free);
 #undef TAKE
     b->iface.capabilities = lce195_backend_caps(b);
 }
