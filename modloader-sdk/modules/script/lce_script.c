@@ -1,5 +1,6 @@
 /* Sandboxed Lua 5.4.8 host for LCE mods. See lce_script.h. */
 #include "lce_script.h"
+#include "../../include/lce_shader_fog.h"
 #include "../../include/lce_tick_pacing.h"
 #include <stddef.h>
 #include <string.h>
@@ -1228,6 +1229,52 @@ static int b_config(lua_State *L) {
     lua_pushnumber(L, API_HAS(s, config_double) ? s->api->config_double(s->ctx, k, def, lo, hi) : def);
     return 1;
 }
+
+static int b_shader_preset_info(lua_State *L) {
+    static const char fog_name[] = "fog_color_v1";
+    if (!lua_isnoneornil(L, 1)) luaL_checktype(L, 1, LUA_TSTRING);
+    size_t name_len;
+    const char *name = luaL_optlstring(L, 1, fog_name, &name_len);
+    const int known = name_len == sizeof fog_name - 1 && memcmp(name, fog_name, name_len) == 0;
+    const char *status = "unsupported";
+    int valid = 0;
+    lce_shader_fog_v1 fog = {0};
+
+    if (known) {
+        lce_script *s = self(L);
+        status = "config_unavailable";
+        if (API_HAS(s, config_get) && (s->api->capabilities2 & LCE_CAP2_CONFIG)) {
+            lce_nbt_value value = {0};
+            lce_status rc = s->api->config_get(s->ctx, LCE_SHADER_FOG_CONFIG_KEY_V1, &value);
+            if (rc == LCE_E_NOTFOUND) {
+                status = "unconfigured";
+            } else if (rc == LCE_OK) {
+                valid = value.type == LCE_NBT_STRING && lce_shader_fog_parse_v1(value.s, &fog);
+                status = "invalid";
+                if (valid) status = fog.weight == 0 ? "disabled" : "valid";
+            }
+        }
+    }
+
+    lua_createtable(L, 0, valid ? 11 : 7);
+    lua_pushlstring(L, name, name_len); lua_setfield(L, -2, "name");
+    lua_pushstring(L, status); lua_setfield(L, -2, "status");
+    lua_pushboolean(L, valid); lua_setfield(L, -2, "valid");
+    /* The package decoder has no live GPU renderer behind it. */
+    lua_pushboolean(L, 0); lua_setfield(L, -2, "available");
+    lua_pushboolean(L, 0); lua_setfield(L, -2, "active");
+    if (known) {
+        lua_pushliteral(L, LCE_SHADER_FOG_CONFIG_KEY_V1); lua_setfield(L, -2, "config_key");
+        lua_pushinteger(L, LCE_SHADER_FOG_MAX_WEIGHT_V1); lua_setfield(L, -2, "max_weight");
+    }
+    if (valid) {
+        lua_pushinteger(L, fog.red); lua_setfield(L, -2, "red");
+        lua_pushinteger(L, fog.green); lua_setfield(L, -2, "green");
+        lua_pushinteger(L, fog.blue); lua_setfield(L, -2, "blue");
+        lua_pushinteger(L, fog.weight); lua_setfield(L, -2, "weight");
+    }
+    return 1;
+}
 #endif
 static int b_translate(lua_State *L) {
     lce_script *s = self(L);
@@ -1418,6 +1465,7 @@ static void install_bindings(lua_State *L) {
 #endif
 #ifdef LCE_HAVE_CONFIG_1_8
         {"config", b_config},
+        {"shader_preset_info", b_shader_preset_info},
 #endif
 #ifdef LCE_HAVE_ENTITY_NBT_1_5
         {"entity_nbt_get", b_entity_nbt_get}, {"entity_data_get", b_entity_data_get}, {"entity_data_set", b_entity_data_set},

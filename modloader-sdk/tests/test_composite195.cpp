@@ -1341,6 +1341,18 @@ static void scenario_throwables() {
     CHECK(strstr(line, "projectiles=1") != nullptr);
 }
 
+static void scenario_lua_shader_preset() {
+    image();
+    install("shader_fog_preset");
+    files["/data/lce-mods/shader_fog_preset/config"] = load(g_pkg + "/shader_fog_preset/config");
+    boot();
+    CHECK_EQ(lce195c_script_count(&g_comp), 1u);
+    CHECK(logged("LCE_SDK script: fog_color_v1 status=valid available=false active=false rgb=#6A91B4 weight=64/96"));
+    CHECK_EQ(lce_loader_commit(g_l), LCE_OK);
+    const lce_mod_report *report = mod("shader_fog_preset");
+    CHECK(report && report->state == LCE_MOD_LIVE);
+}
+
 static void scenario_lua_worldgen() {
     image();
     override_all();
@@ -1424,6 +1436,7 @@ int main(int argc, char **argv) {
     run("Lua brewing ignores refused native mixes", +[] { scenario_lua_brewing(true); });
     run("effects, potions, enchantments, biomes, custom audio", scenario_registries);
     run("Lua biome and structure world generation", scenario_lua_worldgen);
+    run("Lua stock fog preset reads the packaged config", scenario_lua_shader_preset);
     run("shipping publisher refused the built items -> items refused", scenario_publisher_refused);
     run("API 1.9 throwables", scenario_throwables);
 #ifdef LCE_HAVE_BOATS_1_10

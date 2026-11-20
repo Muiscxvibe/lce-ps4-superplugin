@@ -1,0 +1,13 @@
+{
+  "id": "shader_fog_preset",
+  "name": "Stock Fog Preset Status",
+  "version": "1.0.0",
+  "target": "CUSA00265-1.95",
+  "config": {
+    "lce_visual.fog_color_v1": {
+      "default": "#6A91B440",
+      "comment": "Stock fog color request. The last two digits are hex weight from 00 to 60."
+    }
+  },
+  "scripts": {"main.lua": "scripts/main.lua"}
+}

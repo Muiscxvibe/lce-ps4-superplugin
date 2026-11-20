@@ -15,6 +15,7 @@ PKGS += build/pkg/luabrewing/mod.lcm
 
 PKGS += build/pkg/fuelroute/mod.lcm
 PKGS += build/pkg/luafuelstatus/mod.lcm
+PKGS += build/pkg/shader_fog_preset/mod.lcm
 
 all: test
 
@@ -33,6 +34,8 @@ build/pkg/fuelroute/mod.lcm: tests/fixtures/fuelroute/mod.json tools/lce_modpack
 	python3 tools/lce_modpack.py build --profile retail195-experimental-fuel tests/fixtures/fuelroute build/pkg
 build/pkg/luafuelstatus/mod.lcm: examples/lua-fuel-status/mod.json examples/lua-fuel-status/scripts/main.lua tools/lce_modpack.py tools/lce_ext_schema.py
 	python3 tools/lce_modpack.py build --profile retail195-experimental-fuel examples/lua-fuel-status build/pkg
+build/pkg/shader_fog_preset/mod.lcm: examples/shader-fog-preset/mod.json examples/shader-fog-preset/scripts/main.lua tools/lce_modpack.py tools/lce_ext_schema.py
+	python3 tools/lce_modpack.py build examples/shader-fog-preset build/pkg
 build/pkg/%/mod.lcm: tests/fixtures/%/mod.json $(wildcard tests/fixtures/*/scripts/*.lua) $(wildcard tests/fixtures/*/textures/*.png) tools/lce_modpack.py tools/lce_ext_schema.py
 	python3 tools/lce_modpack.py build tests/fixtures/$* build/pkg
 
@@ -71,7 +74,7 @@ LUA_SRC = $(filter-out modules/script/lua/lua.c modules/script/lua/luac.c,$(wild
 LUA_OBJ = $(patsubst modules/script/lua/%.c,$(B)/lua/%.o,$(LUA_SRC))
 $(B)/lua/%.o: modules/script/lua/%.c
 	@mkdir -p $(B)/lua; $(CC) -std=c11 -O1 -g $(SAN) -DLUA_USE_POSIX -w -c $< -o $@
-$(B)/lce_script.o: modules/script/lce_script.c modules/script/lce_script.h include/lce_mod_api.h include/lce_tick_pacing.h
+$(B)/lce_script.o: modules/script/lce_script.c modules/script/lce_script.h include/lce_mod_api.h include/lce_tick_pacing.h include/lce_shader_fog.h
 	@mkdir -p $(B); $(CC) $(CFLAGS) -DLUA_USE_POSIX -c $< -o $@
 $(B)/test_composite195: tests/test_composite195.cpp tests/fake_effects195.h tests/mock_backend.cpp $(COMPOSITE) $(MODULES) $(CORE) $(B)/sha256.o $(B)/lce_script.o $(LUA_OBJ) loader/vanilla_195.inc
 	$(CXX) $(CXXFLAGS) -DLCE195_HOST_TEST -DLCE195C_HOST_TEST -DLE195_TEST tests/test_composite195.cpp tests/mock_backend.cpp $(COMPOSITE) $(MODULES) $(CORE) $(B)/sha256.o $(B)/lce_script.o $(LUA_OBJ) -lm -o $@

@@ -857,6 +857,10 @@ local hi  = lce.config("general.greeting", "Hi")         -- string
 local raw = lce.config("general.ores")                   -- no default: the raw value or nil (lists are raw text)
 ```
 
+`lce.shader_preset_info([name])` validates the caller's `fog_color_v1` config
+and reports the GPU availability flags. See the
+[Lua stock fog example](examples/shader-fog-preset/README.md).
+
 **Read it from C** with `config_get`, `config_int(ctx, key, def, min, max)`, `config_double`, `config_string`. Pass `min > max` for no range. Check `api->struct_size` and `LCE_CAP2_CONFIG` first.
 
 **File format.** The file is a subset of TOML, the format Forge 1.13+ uses:

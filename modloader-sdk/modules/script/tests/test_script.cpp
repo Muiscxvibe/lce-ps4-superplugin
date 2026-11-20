@@ -234,9 +234,93 @@ static void test_tick_pacing(const lce_api &api) {
     subs.clear();
 }
 
+#ifdef LCE_HAVE_CONFIG_1_8
+static void test_shader_preset_info(const lce_api &api) {
+    lce_api config_api = api;
+    config_api.capabilities2 |= LCE_CAP2_CONFIG;
+    config_api.config_get = +[](lce_mod_ctx *ctx, const char *key, lce_nbt_value *out) -> lce_status {
+        if (!ctx) return LCE_E_INVALID;
+        const lce_cfg_entry *entry = lce_cfg_find(reinterpret_cast<const lce_cfg_store *>(ctx), key);
+        if (!entry) return LCE_E_NOTFOUND;
+        *out = entry->v;
+        return LCE_OK;
+    };
+    lce_cfg_store first{}, second{};
+    lce_script *s = lce_script_new(&config_api, reinterpret_cast<lce_mod_ctx *>(&first), nullptr);
+    lce_script *other = lce_script_new(&config_api, reinterpret_cast<lce_mod_ctx *>(&second), nullptr);
+    CHECK(s && other);
+    char err[256];
+    const char *helpers = R"(
+        function check(status, has_color)
+            local info = lce.shader_preset_info(nil)
+            assert(info.status == status, 'unexpected preset status: ' .. info.status)
+            assert(info.name == 'fog_color_v1')
+            assert(info.available == false and info.active == false)
+            assert(info.config_key == 'lce_visual.fog_color_v1' and info.max_weight == 96)
+            assert(info.valid == has_color)
+            if not has_color then
+                assert(info.red == nil and info.green == nil and info.blue == nil and info.weight == nil)
+            end
+            return info
+        end
+    )";
+    CHECK(run(s, helpers, err, sizeof err) == LCE_OK);
+    CHECK(run(other, helpers, err, sizeof err) == LCE_OK);
+    const char *text = "[lce_visual]\nfog_color_v1 = \"#01aBfF60\"\n";
+    lce_cfg_parse(&first, text, strlen(text));
+    CHECK(run(s, R"(
+        local fog = check('valid', true)
+        assert(fog.red == 1 and fog.green == 171 and fog.blue == 255 and fog.weight == 96)
+        fog.weight = 0
+        assert(lce.shader_preset_info('fog_color_v1').weight == 96)
+        assert(lce.shader_preset_info().weight == 96)
+        for _, name in ipairs({'fog_color_v1\0other', 'viewport_tint_v1', ''}) do
+            local unknown = lce.shader_preset_info(name)
+            assert(unknown.name == name and unknown.status == 'unsupported')
+            assert(unknown.valid == false and unknown.available == false and unknown.active == false)
+            assert(unknown.config_key == nil and unknown.weight == nil)
+        end
+        assert(not pcall(lce.shader_preset_info, 9))
+    )", err, sizeof err) == LCE_OK);
+    CHECK(run(other, "check('unconfigured', false)", err, sizeof err) == LCE_OK);
+
+    text = "[lce_visual]\nfog_color_v1 = '#0000ff00'\n";
+    lce_cfg_parse(&second, text, strlen(text));
+    CHECK(run(other, "local fog = check('disabled', true); assert(fog.blue == 255 and fog.weight == 0)", err, sizeof err) == LCE_OK);
+    CHECK(run(s, "assert(check('valid', true).weight == 96)", err, sizeof err) == LCE_OK);
+
+    for (const char *value : {"'#0102FF61'", "'#0102FF4'", "'#0102FF4Z'", "'#0102FF40x'", "'0102FF40'",
+                              "42", "true", "['#0102FF40']"}) {
+        std::string invalid = std::string("[lce_visual]\nfog_color_v1 = ") + value;
+        lce_cfg_parse(&first, invalid.c_str(), invalid.size());
+        CHECK(run(s, "check('invalid', false)", err, sizeof err) == LCE_OK);
+    }
+    lce_script_free(other);
+    lce_script_free(s);
+
+    // A truncated table, a missing capability bit and a failed config read are unavailability.
+    lce_api old = config_api;
+    old.struct_size = offsetof(lce_api, config_get);
+    lce_api missing_cap = config_api;
+    missing_cap.capabilities2 &= ~LCE_CAP2_CONFIG;
+    lce_api missing_callback = config_api;
+    missing_callback.config_get = nullptr;
+    for (const lce_api *host : {&old, &missing_cap, &missing_callback, &config_api}) {
+        s = lce_script_new(host, nullptr, nullptr);
+        CHECK(s);
+        CHECK(run(s, helpers, err, sizeof err) == LCE_OK);
+        CHECK(run(s, "check('config_unavailable', false)", err, sizeof err) == LCE_OK);
+        lce_script_free(s);
+    }
+}
+#endif
+
 int main() {
     lce_api api = make_api();
     test_tick_pacing(api);
+#ifdef LCE_HAVE_CONFIG_1_8
+    test_shader_preset_info(api);
+#endif
 
     { lce_api a = api; a.capabilities = LCE_CAP_TEXTURES; a.register_texture = ftexture;
       lce_script *s = lce_script_new(&a, nullptr, nullptr); CHECK(s); char err[256];

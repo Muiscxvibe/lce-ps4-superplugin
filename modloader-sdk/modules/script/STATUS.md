@@ -43,6 +43,7 @@ make forward progress (every instruction re-raises), and `lce_script_run_main` /
 | `lce.tick_stats()` | Mod-local counts for paced callback attempts and skipped deliveries. |
 | `lce.send_chat` / `give_item` / `translate` / `log` | the matching services |
 | `lce.config(key[, default[, min, max]])` (API 1.8, `#ifdef LCE_HAVE_CONFIG_1_8`) | `config_int` / `config_double` / `config_string` chosen by the default's type (boolean = `config_int` 0..1); no default = `config_get` raw value or nil. Host: test §2f against the real `loader/config_store.h`, plus a pre-1.8 table (returns the default) |
+| `lce.shader_preset_info([name])` | Validates the current package's stock fog color preset through `config_get`. The result reports GPU availability separately. See the [fog preset example](../../examples/shader-fog-preset/README.md). |
 
 ### Workshop-compat shim (global)
 
