@@ -1,0 +1,1225 @@
+--- a/Minecraft.Client/PlayerConnection.cpp
++++ b/Minecraft.Client/PlayerConnection.cpp
+@@ -74,6 +74,9 @@
+ //neo: added
+ #include "ItemNameMap.h"
+ #include "../Minecraft.World/ByteArrayOutputStream.h"
++#if defined(LCE_PS4_195_COMPAT)
++#include "LceModIdHandshake.h"
++#endif
+ 
+ namespace
+ {
+@@ -137,6 +140,9 @@
+ 
+ PlayerConnection::~PlayerConnection()
+ {
++#if defined(LCE_PS4_195_COMPAT)
++	lce_modids_srv::forget(this, connection);
++#endif
+ 	delete connection;
+ 	DeleteCriticalSection(&done_cs);
+ }
+@@ -174,6 +180,11 @@
+ 	tickCount++;
+ 	connection->tick();
+ 	if(done) return;
++#if defined(LCE_PS4_195_COMPAT)
++	// LCE|ModIds: request the client's mod ID table, enforce the timeout/kick.
++	lce_modids_srv::tick(this, connection, player, tickCount);
++	if(done) return;
++#endif
+ 
+ 	if ((tickCount - lastKeepAliveTick) > 20 * 1)
+ 	{
+@@ -2862,6 +2873,9 @@
+ 
+ void PlayerConnection::handleCustomPayload(shared_ptr<CustomPayloadPacket> customPayloadPacket)
+ {
++#if defined(LCE_PS4_195_COMPAT)
++	if (lce_modids_srv::handle_payload(this, connection, player, customPayloadPacket, tickCount)) return;
++#endif
+ #if defined(_WINDOWS64) && defined(MINECRAFT_SERVER_BUILD)
+ 	// Identity token response from client
+ 	if (CustomPayloadPacket::IDENTITY_TOKEN_RESPONSE.compare(customPayloadPacket->identifier) == 0)
+--- a/Minecraft.World/Connection.cpp
++++ b/Minecraft.World/Connection.cpp
+@@ -69,6 +69,7 @@
+ #include "RotateHeadPacket.h"
+ #include "PS4MoveEntity195.h"
+ #include "PS4MinigamePackets.h"
++#include "LceModIdRegistry.h"
+ #include <atomic>
+ #include <cstdlib>
+ #include <cstdio>
+@@ -295,6 +296,8 @@
+ 	if (!socket || socket->isLocal() || !packetListener->isServerPacketListener()) {
+ 		Packet::writePacket(packet,output); return true;
+ 	}
++	// LCE|ModIds: custom stacks reach a client only after its handshake accepted them.
++	if (!lce_modids_srv::filter_outgoing(this,packet)) return true;
+ 	if (ps4EnvFlag(0) && ps4DiagnosticPackets++ < 512)
+ 		PS4_VLOG("[PS4 compatibility] outgoing packet %d\n",packet->getId());
+ 	const auto indices=ps4_observed_metadata_195::indices();
+@@ -910,7 +913,7 @@
+             if (stackId<0) return true; // keep holding until a stack arrives
+             // Saplings (ID 6) are suspected of crashing the retail client; the
+             // PS4 item registry equivalence is unproven, so withhold them.
+-            if (stackId==6) {
++            if (stackId==6 || !lce_modids_srv::gate_allows(this,stackId)) {
+                 PS4_VLOG("[PS4 compatibility] withheld item entity %d stack=%d\n",update->id,stackId); std::fflush(stderr);
+                 ps4PendingItemSpawns.erase(pending); ps4Mobs.forget_item(update->id);
+                 ps4SkippedEntities.insert(update->id);
+--- a/Minecraft.Server/Windows64/ServerMain.cpp
++++ b/Minecraft.Server/Windows64/ServerMain.cpp
+@@ -38,6 +38,9 @@
+ #include "../../Minecraft.World/net.minecraft.world.level.tile.h"
+ #include "../../Minecraft.World/Random.h"
+ #include "../../Minecraft.World/MobCategory.h"
++#if defined(LCE_PS4_195_COMPAT)
++#include "../../Minecraft.World/LceModIdRegistry.h"
++#endif
+ 
+ #include <stdio.h>
+ #include <stdlib.h>
+@@ -627,6 +630,28 @@
+ 		return 4;
+ 	}
+ 
++#if defined(LCE_PS4_195_COMPAT)
++	{
++		// LCE|ModIds: register the world's mod ID placeholders before the world
++		// loads, so saved mod stacks/blocks are not dropped as unknown IDs.
++		std::string saveId = worldBootstrap.resolvedSaveId.empty() ? serverProperties.worldSaveId : worldBootstrap.resolvedSaveId;
++		if (saveId.empty()) saveId = "world";
++		std::string modIdError;
++		if (saveId.find_first_of("/\\:") != std::string::npos || saveId.find("..") != std::string::npos)
++			modIdError = "unsupported level-id for the mod ID ledger: " + saveId;
++		else if (!lce_modids_srv::startup("Windows64/GameHDD/" + saveId, &modIdError) && modIdError.empty())
++			modIdError = "unknown error";
++		if (!modIdError.empty())
++		{
++			LogErrorf("startup", "Mod ID ledger: %s", modIdError.c_str());
++			WinsockNetLayer::Shutdown();
++			g_NetworkManager.Terminate();
++			CleanupDevice();
++			return 5;
++		}
++	}
++#endif
++
+ 	NetworkGameInitData *param = new NetworkGameInitData();
+ 	if (config.hasSeed)
+ 	{
+--- /dev/null
++++ b/Minecraft.World/LceModIdWire.h
+@@ -0,0 +1,271 @@
++/* LCE|ModIds wire codec (protocol v1), shared by the PS4 client module
++ * (modules/netsync195) and the PC server (server/new/Minecraft.World/LceModIdWire.h
++ * is a byte-identical copy; the test suites check that).
++ *
++ * Header-only, freestanding C++ (no STL, no exceptions, no heap) so that the
++ * same file builds in the OpenOrbis plugin and in the Windows server.
++ * Everything multi-byte is big-endian. See server/PROTOCOL.md.
++ */
++// Include guard (not #pragma once): the two byte-identical copies must not
++// both define the codec when a test includes them via different paths.
++#ifndef LCE_MODIDS_WIRE_H
++#define LCE_MODIDS_WIRE_H
++#include <stddef.h>
++#include <stdint.h>
++#include <string.h>
++
++namespace lce_modids {
++
++constexpr uint8_t kVersion = 1;
++constexpr char kChannel[] = "LCE|ModIds";            // 10 chars (CustomPayload channel limit: 20)
++constexpr unsigned kChannelLen = sizeof kChannel - 1;
++constexpr uint8_t kServerboundPacket = 225;          // ServerboundCustomPayloadPacket (reader 0x5fbe00)
++constexpr uint8_t kClientboundPacket = 250;          // ClientboundCustomPayloadPacket (reader 0x18bbd0)
++constexpr size_t kMaxPacket = 4096;                  // Coordinator::send_game_packet cap
++constexpr size_t kPacketOverhead = 1 + 2 + 2 * kChannelLen + 2;
++constexpr size_t kChunkBudget = 3968;                // payload bytes per generated chunk (<= kMaxPacket - overhead)
++constexpr size_t kMaxPayload = kMaxPacket - kPacketOverhead;
++constexpr unsigned kMaxChunks = 64;
++constexpr unsigned kMaxEntries = 2048;               // LCE_LEDGER_MAX
++constexpr unsigned kMaxKey = 63;                     // LCE_MAX_KEY - 1
++constexpr unsigned kMaxMessage = 480;                // RESULT text bytes
++constexpr size_t kHeaderSize = 10;                   // u8 version, u8 type, u32 session, u16 index, u16 count
++constexpr size_t kEntryFixed = 11;
++
++enum MsgType : uint8_t { kRequest = 1, kHello = 2, kResult = 3, kTable = 4 };
++enum Kind : uint8_t { kItem = 0, kBlock = 1 };
++enum EntryFlag : uint8_t {
++    kLive = 1,          // registered in the client's game this session
++    kBlockHasItem = 2,  // block: a block-item exists (not LCE_BLOCK_FLAG_NO_ITEM)
++    kTransparent = 4,   // block: LCE_BLOCK_FLAG_TRANSPARENT
++    kNoCollide = 8,     // block: LCE_BLOCK_FLAG_NO_COLLIDE
++};
++enum RequestFlag : uint8_t { kPolicyAdopt = 1, kPolicyAllowMissingItems = 2 };
++enum Verdict : uint8_t { kAccept = 0, kReject = 1 };
++enum Code : uint16_t {
++    kOk = 0,
++    kMalformed = 1,        // bad header/chunk order/digest/entry
++    kBadVersion = 2,       // unsupported protocol version
++    kKeyIdConflict = 3,    // same key, different numeric ID
++    kIdTaken = 4,          // client's ID belongs to another key on the server
++    kIdBuiltin = 5,        // client's ID is a built-in server item/tile
++    kPropsMismatch = 6,    // same key+ID, different max stack/durability/hardness (mod version mismatch)
++    kMissing = 7,          // the world uses content this client does not have
++    kServerLedgerBad = 8,  // server ledger unreadable/unwritable
++    kLimit = 9,            // too many entries
++    kTimeout = 10,         // no HELLO although the world has mod IDs
++    kNotAllowed = 11,      // locked server: new mod content is not accepted
++    kDuplicate = 12,       // client sent the same key or ID twice
++};
++
++/* One ledger entry on the wire (kEntryFixed + key_len bytes):
++ *   u8 kind, u8 flags, u16 id, u8 max_stack (1..64), u8 material/item-kind,
++ *   u16 a, u16 b, u8 key_len, key bytes (lce_valid_key charset)
++ * items:  a = max_damage (0 = not damageable), b = 0
++ * blocks: a = hardness*100, b = resistance*100 (both saturate at 0xfffe; 0xffff reserved) */
++struct Entry {
++    uint8_t kind, flags;
++    uint16_t id;
++    uint8_t max_stack, material;
++    uint16_t a, b;
++    uint8_t key_len;
++    char key[kMaxKey + 1];
++};
++
++inline uint32_t block_item_id(uint32_t block) { return block < 256 ? block : block + 768; }
++inline uint32_t item_space_id(const Entry &e) { return e.kind == kItem ? e.id : block_item_id(e.id); }
++
++/* Same rule as lce_valid_key (loader/package.cpp). */
++inline bool valid_key(const char *key, size_t n) {
++    if (!key || n == 0 || n > kMaxKey) return false;
++    size_t ns = 0;
++    while (ns < n && key[ns] != ':') ++ns;
++    if (ns == n || ns < 2 || ns >= 32 || n == ns + 1) return false;
++    for (size_t i = 0; i < ns; ++i) {
++        char c = key[i];
++        if (!((c >= 'a' && c <= 'z') || (c >= '0' && c <= '9') || c == '_')) return false;
++    }
++    for (size_t i = ns + 1; i < n; ++i) {
++        char c = key[i];
++        if (!((c >= 'a' && c <= 'z') || (c >= '0' && c <= '9') || c == '_' || c == '.' || c == '/' || c == '-' || c == '#'))
++            return false;
++    }
++    for (size_t i = 0; i + 1 < n; ++i) if (key[i] == '.' && key[i + 1] == '.') return false;
++    return true;
++}
++
++inline bool set_key(Entry &e, const char *key) {
++    size_t n = key ? strlen(key) : 0;
++    if (!valid_key(key, n)) return false;
++    memcpy(e.key, key, n); e.key[n] = 0; e.key_len = (uint8_t)n;
++    return true;
++}
++
++/* ---- SHA-256 (FIPS 180-4) ---------------------------------------------- */
++struct Sha256 {
++    uint32_t h[8]; uint8_t buf[64]; uint64_t len; uint32_t used;
++    static uint32_t ror(uint32_t x, unsigned n) { return (x >> n) | (x << (32 - n)); }
++    void init() {
++        static const uint32_t iv[8] = {0x6a09e667, 0xbb67ae85, 0x3c6ef372, 0xa54ff53a, 0x510e527f, 0x9b05688c, 0x1f83d9ab, 0x5be0cd19};
++        memcpy(h, iv, sizeof h); len = 0; used = 0;
++    }
++    void block(const uint8_t *p) {
++        static const uint32_t k[64] = {
++            0x428a2f98, 0x71374491, 0xb5c0fbcf, 0xe9b5dba5, 0x3956c25b, 0x59f111f1, 0x923f82a4, 0xab1c5ed5, 0xd807aa98, 0x12835b01, 0x243185be,
++            0x550c7dc3, 0x72be5d74, 0x80deb1fe, 0x9bdc06a7, 0xc19bf174, 0xe49b69c1, 0xefbe4786, 0x0fc19dc6, 0x240ca1cc, 0x2de92c6f, 0x4a7484aa,
++            0x5cb0a9dc, 0x76f988da, 0x983e5152, 0xa831c66d, 0xb00327c8, 0xbf597fc7, 0xc6e00bf3, 0xd5a79147, 0x06ca6351, 0x14292967, 0x27b70a85,
++            0x2e1b2138, 0x4d2c6dfc, 0x53380d13, 0x650a7354, 0x766a0abb, 0x81c2c92e, 0x92722c85, 0xa2bfe8a1, 0xa81a664b, 0xc24b8b70, 0xc76c51a3,
++            0xd192e819, 0xd6990624, 0xf40e3585, 0x106aa070, 0x19a4c116, 0x1e376c08, 0x2748774c, 0x34b0bcb5, 0x391c0cb3, 0x4ed8aa4a, 0x5b9cca4f,
++            0x682e6ff3, 0x748f82ee, 0x78a5636f, 0x84c87814, 0x8cc70208, 0x90befffa, 0xa4506ceb, 0xbef9a3f7, 0xc67178f2};
++        uint32_t w[64];
++        for (int i = 0; i < 16; ++i) w[i] = (uint32_t)p[4 * i] << 24 | (uint32_t)p[4 * i + 1] << 16 | (uint32_t)p[4 * i + 2] << 8 | p[4 * i + 3];
++        for (int i = 16; i < 64; ++i) {
++            uint32_t s0 = ror(w[i - 15], 7) ^ ror(w[i - 15], 18) ^ (w[i - 15] >> 3);
++            uint32_t s1 = ror(w[i - 2], 17) ^ ror(w[i - 2], 19) ^ (w[i - 2] >> 10);
++            w[i] = w[i - 16] + s0 + w[i - 7] + s1;
++        }
++        uint32_t a = h[0], b = h[1], c = h[2], d = h[3], e = h[4], f = h[5], g = h[6], hh = h[7];
++        for (int i = 0; i < 64; ++i) {
++            uint32_t t1 = hh + (ror(e, 6) ^ ror(e, 11) ^ ror(e, 25)) + ((e & f) ^ (~e & g)) + k[i] + w[i];
++            uint32_t t2 = (ror(a, 2) ^ ror(a, 13) ^ ror(a, 22)) + ((a & b) ^ (a & c) ^ (b & c));
++            hh = g; g = f; f = e; e = d + t1; d = c; c = b; b = a; a = t1 + t2;
++        }
++        h[0] += a; h[1] += b; h[2] += c; h[3] += d; h[4] += e; h[5] += f; h[6] += g; h[7] += hh;
++    }
++    void update(const void *data, size_t n) {
++        const uint8_t *p = (const uint8_t *)data;
++        len += n;
++        while (n) {
++            size_t take = 64 - used; if (take > n) take = n;
++            memcpy(buf + used, p, take); used += (uint32_t)take; p += take; n -= take;
++            if (used == 64) { block(buf); used = 0; }
++        }
++    }
++    void final(uint8_t out[32]) {
++        uint64_t bits = len * 8;
++        uint8_t pad = 0x80; update(&pad, 1);
++        uint8_t z = 0; while (used != 56) update(&z, 1);
++        uint8_t l[8]; for (int i = 0; i < 8; ++i) l[i] = (uint8_t)(bits >> (56 - 8 * i));
++        update(l, 8);
++        for (int i = 0; i < 8; ++i) { out[4 * i] = (uint8_t)(h[i] >> 24); out[4 * i + 1] = (uint8_t)(h[i] >> 16); out[4 * i + 2] = (uint8_t)(h[i] >> 8); out[4 * i + 3] = (uint8_t)h[i]; }
++    }
++};
++
++/* Digest of an entry list = SHA-256 of its canonical LCEIDS 1 ledger text
++ * ("LCEIDS 1\n" + "item|block <key> <id>\n" per entry, in order). For the
++ * client's full ledger in file order this equals the file's sha256 trailer. */
++struct Digest {
++    Sha256 s;
++    void init() { s.init(); s.update("LCEIDS 1\n", 9); }
++    void add(const Entry &e) {
++        char line[96]; size_t n = 0;
++        const char *k = e.kind == kItem ? "item " : "block ";
++        size_t kl = strlen(k); memcpy(line, k, kl); n = kl;
++        memcpy(line + n, e.key, e.key_len); n += e.key_len; line[n++] = ' ';
++        char d[8]; int dn = 0; uint32_t v = e.id;
++        do { d[dn++] = (char)('0' + v % 10); v /= 10; } while (v);
++        while (dn) line[n++] = d[--dn];
++        line[n++] = '\n';
++        s.update(line, n);
++    }
++    void final(uint8_t out[32]) { s.final(out); }
++};
++
++/* ---- bounded big-endian reader/writer ------------------------------------ */
++struct Writer {
++    uint8_t *p; size_t cap, n; bool ok;
++    void init(uint8_t *buf, size_t c) { p = buf; cap = c; n = 0; ok = buf != nullptr; }
++    void u8(uint32_t v) { if (!ok || n + 1 > cap) { ok = false; return; } p[n++] = (uint8_t)v; }
++    void u16(uint32_t v) { u8(v >> 8); u8(v); }
++    void u32(uint32_t v) { u16(v >> 16); u16(v); }
++    void bytes(const void *d, size_t len) { if (!ok || len > cap - n) { ok = false; return; } if (len) memcpy(p + n, d, len); n += len; }
++};
++struct Reader {
++    const uint8_t *p; size_t n, pos; bool ok;
++    void init(const uint8_t *buf, size_t len) { p = buf; n = buf ? len : 0; pos = 0; ok = buf != nullptr; }
++    uint32_t u8() { if (!ok || pos + 1 > n) { ok = false; return 0; } return p[pos++]; }
++    uint32_t u16() { uint32_t a = u8(); return a << 8 | u8(); }
++    uint32_t u32() { uint32_t a = u16(); return a << 16 | u16(); }
++    bool bytes(void *out, size_t len) { if (!ok || len > n - pos) { ok = false; return false; } if (len) memcpy(out, p + pos, len); pos += len; return true; }
++    size_t left() const { return ok ? n - pos : 0; }
++};
++
++struct Header { uint8_t version, type; uint32_t session; uint16_t index, count; };
++
++inline void put_header(Writer &w, uint8_t type, uint32_t session, unsigned index, unsigned count) {
++    w.u8(kVersion); w.u8(type); w.u32(session); w.u16(index); w.u16(count);
++}
++/* Returns false on truncation. The version is returned, not checked, so the
++ * caller can answer kBadVersion instead of treating it as noise. */
++inline bool get_header(Reader &r, Header &h) {
++    h.version = (uint8_t)r.u8(); h.type = (uint8_t)r.u8(); h.session = r.u32(); h.index = (uint16_t)r.u16(); h.count = (uint16_t)r.u16();
++    return r.ok;
++}
++
++inline size_t entry_size(const Entry &e) { return kEntryFixed + e.key_len; }
++inline void put_entry(Writer &w, const Entry &e) {
++    w.u8(e.kind); w.u8(e.flags); w.u16(e.id); w.u8(e.max_stack); w.u8(e.material); w.u16(e.a); w.u16(e.b);
++    w.u8(e.key_len); w.bytes(e.key, e.key_len);
++}
++/* Validates kind, key charset, max_stack range and the ID range of the kind. */
++inline bool get_entry(Reader &r, Entry &e) {
++    memset(&e, 0, sizeof e);
++    e.kind = (uint8_t)r.u8(); e.flags = (uint8_t)r.u8(); e.id = (uint16_t)r.u16(); e.max_stack = (uint8_t)r.u8();
++    e.material = (uint8_t)r.u8(); e.a = (uint16_t)r.u16(); e.b = (uint16_t)r.u16(); e.key_len = (uint8_t)r.u8();
++    if (!r.ok || e.key_len == 0 || e.key_len > kMaxKey) return false;
++    if (!r.bytes(e.key, e.key_len)) return false;
++    e.key[e.key_len] = 0;
++    if (e.kind > kBlock || e.max_stack < 1 || e.max_stack > 64 || (e.flags & 0xf0)) return false;
++    if (e.kind == kItem ? (e.id < 256 || e.id >= 32000) : (e.id < 1 || e.id >= 4096)) return false;
++    return valid_key(e.key, e.key_len);
++}
++
++/* ---- CustomPayload framing ----------------------------------------------- */
++/* Serverbound packet bytes as the native writer emits them: id 225, UTF channel
++ * (u16 char count + UTF-16BE), u16 payload length, payload. */
++inline size_t build_serverbound(const uint8_t *payload, size_t len, uint8_t *out, size_t cap) {
++    if (len == 0 || len > kMaxPayload) return 0;
++    Writer w; w.init(out, cap);
++    w.u8(kServerboundPacket); w.u16(kChannelLen);
++    for (unsigned i = 0; i < kChannelLen; ++i) w.u16((uint8_t)kChannel[i]);
++    w.u16((uint32_t)len); w.bytes(payload, len);
++    return w.ok ? w.n : 0;
++}
++/* Matches one whole clientbound frame [250][UTF "LCE|ModIds"][u16 len][payload]
++ * exactly (the server queues these as single-packet frames). */
++inline bool match_clientbound(const uint8_t *frame, size_t n, const uint8_t **payload, size_t *len) {
++    if (!frame || n < kPacketOverhead + kHeaderSize || frame[0] != kClientboundPacket) return false;
++    if (frame[1] != 0 || frame[2] != kChannelLen) return false;
++    for (unsigned i = 0; i < kChannelLen; ++i)
++        if (frame[3 + 2 * i] != 0 || frame[4 + 2 * i] != (uint8_t)kChannel[i]) return false;
++    size_t at = 3 + 2 * kChannelLen;
++    size_t l = (size_t)frame[at] << 8 | frame[at + 1];
++    if (l != n - kPacketOverhead) return false;
++    *payload = frame + kPacketOverhead; *len = l;
++    return true;
++}
++
++/* ---- message bodies ------------------------------------------------------- */
++struct HelloInfo { uint32_t api_version; uint8_t flags; uint16_t total; uint8_t digest[32]; };
++constexpr size_t kHelloPrefix = 4 + 1 + 2 + 32;
++struct RequestInfo { uint16_t total; uint8_t digest[32]; uint8_t flags; };
++struct ResultInfo { uint8_t verdict; uint16_t code; uint16_t msg_len; char msg[kMaxMessage + 1]; uint16_t total; uint8_t digest[32]; uint8_t table_chunks; };
++
++/* Splits `entries` into HELLO/TABLE chunk boundaries: returns the number of
++ * chunks and fills first[i] (index of the first entry of chunk i), or 0 if it
++ * cannot fit in kMaxChunks. `prefix` is the extra body of chunk 0. */
++inline unsigned plan_chunks(const Entry *entries, unsigned count, size_t prefix, unsigned *first, unsigned first_cap) {
++    unsigned chunks = 0, i = 0;
++    do {
++        if (chunks >= kMaxChunks || chunks >= first_cap) return 0;
++        first[chunks] = i;
++        size_t used = kHeaderSize + (chunks == 0 ? prefix : 0) + 2;
++        while (i < count && used + entry_size(entries[i]) <= kChunkBudget) used += entry_size(entries[i++]);
++        ++chunks;
++    } while (i < count);
++    return chunks;
++}
++
++}  // namespace lce_modids
++
++#endif  // LCE_MODIDS_WIRE_H
+--- /dev/null
++++ b/Minecraft.World/LceModIdCore.h
+@@ -0,0 +1,376 @@
++// LCE|ModIds server core: persistent per-world ledger, HELLO reassembly and
++// the merge/validation rules. Engine-independent (STL only) so it is
++// host-tested under ASan/UBSan (modloader-sdk/server/tests). See
++// modloader-sdk/server/PROTOCOL.md.
++#pragma once
++#include <stdint.h>
++#include <stdio.h>
++#include <string.h>
++#include <algorithm>
++#include <functional>
++#include <set>
++#include <string>
++#include <vector>
++#include "LceModIdWire.h"
++
++namespace lce_modids {
++
++struct Policy {
++    bool adopt = true;                 // learn unknown live client entries into the world ledger
++    bool allow_missing_items = false;  // admit clients lacking some item-only entries (stacks withheld)
++};
++
++inline const char *kind_name(uint8_t kind) { return kind == kItem ? "item" : "block"; }
++
++inline bool props_equal(const Entry &a, const Entry &b) {
++    if (a.max_stack != b.max_stack) return false;
++    if (a.kind == kItem) return a.a == b.a;
++    return a.a == b.a && ((a.flags ^ b.flags) & kBlockHasItem) == 0;
++}
++
++// A block with an ID the server's 8-bit chunk storage can hold is placeable.
++inline bool block_placeable(const Entry &e) { return e.kind == kBlock && e.id < 256; }
++
++// ---- server ledger -----------------------------------------------------------
++// Text format (UTF-8, '\n'):
++//   LCESRVIDS 1
++//   <item|block> <key> <id> <max_stack> <material> <a> <b> <flags>
++//   sha256 <64 hex of all preceding bytes>
++// Entries are append-only, like the client ledger: an ID is never reused.
++class ServerLedger {
++public:
++    std::vector<Entry> entries;
++
++    const Entry *find(uint8_t kind, const char *key) const {
++        for (const Entry &e : entries) if (e.kind == kind && !strcmp(e.key, key)) return &e;
++        return nullptr;
++    }
++    const Entry *find_item_space(uint32_t item_id) const {
++        for (const Entry &e : entries) if (item_space_id(e) == item_id) return &e;
++        return nullptr;
++    }
++    const Entry *find_block(uint32_t block_id) const {
++        for (const Entry &e : entries) if (e.kind == kBlock && e.id == block_id) return &e;
++        return nullptr;
++    }
++    // Rejects key/ID collisions; never "repairs".
++    bool add(const Entry &in) {
++        if (entries.size() >= kMaxEntries || find(in.kind, in.key) || find_item_space(item_space_id(in)) ||
++            (in.kind == kBlock && find_block(in.id)))
++            return false;
++        Entry e = in;
++        e.flags &= (uint8_t)~kLive;
++        entries.push_back(e);
++        return true;
++    }
++    void digest(uint8_t out[32]) const {
++        Digest d; d.init();
++        for (const Entry &e : entries) d.add(e);
++        d.final(out);
++    }
++
++    std::string serialize() const {
++        std::string s = "LCESRVIDS 1\n";
++        char line[160];
++        for (const Entry &e : entries) {
++            snprintf(line, sizeof line, "%s %s %u %u %u %u %u %u\n", kind_name(e.kind), e.key, (unsigned)e.id, (unsigned)e.max_stack,
++                     (unsigned)e.material, (unsigned)e.a, (unsigned)e.b, (unsigned)(e.flags & (uint8_t)~kLive));
++            s += line;
++        }
++        uint8_t d[32];
++        Sha256 h; h.init(); h.update(s.data(), s.size()); h.final(d);
++        static const char hx[] = "0123456789abcdef";
++        s += "sha256 ";
++        for (int i = 0; i < 32; ++i) { s += hx[d[i] >> 4]; s += hx[d[i] & 15]; }
++        s += '\n';
++        return s;
++    }
++
++    enum Load { kLoaded = 0, kCorrupt = 1, kBadHash = 2 };
++    // Empty text = new world (empty ledger).
++    Load load(const std::string &text) {
++        entries.clear();
++        if (text.empty()) return kLoaded;
++        static const char hdr[] = "LCESRVIDS 1\n";
++        const size_t hl = sizeof hdr - 1;
++        if (text.size() < hl + 72 || text.compare(0, hl, hdr) || text.back() != '\n') return kCorrupt;
++        const size_t body = text.size() - 72;
++        if (text.compare(body, 7, "sha256 ")) return kCorrupt;
++        uint8_t want[32], got[32];
++        for (int i = 0; i < 32; ++i) {
++            int hi = hexval(text[body + 7 + 2 * i]), lo = hexval(text[body + 8 + 2 * i]);
++            if (hi < 0 || lo < 0) return kCorrupt;
++            want[i] = (uint8_t)(hi << 4 | lo);
++        }
++        Sha256 h; h.init(); h.update(text.data(), body); h.final(got);
++        if (memcmp(want, got, 32)) return kBadHash;
++        size_t pos = hl;
++        while (pos < body) {
++            size_t nl = text.find('\n', pos);
++            if (nl == std::string::npos || nl > body) { entries.clear(); return kCorrupt; }
++            Entry e;
++            if (!parse_line(text.substr(pos, nl - pos), e) || !add(e)) { entries.clear(); return kCorrupt; }
++            pos = nl + 1;
++        }
++        return kLoaded;
++    }
++
++private:
++    static int hexval(char c) {
++        if (c >= '0' && c <= '9') return c - '0';
++        if (c >= 'a' && c <= 'f') return c - 'a' + 10;
++        return -1;
++    }
++    static bool num(const std::string &t, uint32_t max, uint32_t &out) {
++        if (t.empty() || t.size() > 5 || (t.size() > 1 && t[0] == '0')) return false;
++        uint32_t v = 0;
++        for (char c : t) { if (c < '0' || c > '9') return false; v = v * 10 + (uint32_t)(c - '0'); }
++        if (v > max) return false;
++        out = v; return true;
++    }
++    static bool parse_line(const std::string &line, Entry &e) {
++        std::vector<std::string> f;
++        size_t p = 0;
++        while (p <= line.size()) {
++            size_t sp = line.find(' ', p);
++            if (sp == std::string::npos) sp = line.size();
++            f.push_back(line.substr(p, sp - p));
++            p = sp + 1;
++        }
++        if (f.size() != 8) return false;
++        memset(&e, 0, sizeof e);
++        if (f[0] == "item") e.kind = kItem; else if (f[0] == "block") e.kind = kBlock; else return false;
++        if (!set_key(e, f[1].c_str())) return false;
++        uint32_t id, ms, mat, a, b, fl;
++        if (!num(f[2], 0xffff, id) || !num(f[3], 64, ms) || !num(f[4], 255, mat) || !num(f[5], 0xffff, a) ||
++            !num(f[6], 0xffff, b) || !num(f[7], 0xff, fl))
++            return false;
++        e.id = (uint16_t)id; e.max_stack = (uint8_t)ms; e.material = (uint8_t)mat; e.a = (uint16_t)a; e.b = (uint16_t)b;
++        e.flags = (uint8_t)fl;
++        // Same validity rules as an entry received from the wire.
++        uint8_t buf[kEntryFixed + kMaxKey]; Writer w; w.init(buf, sizeof buf); put_entry(w, e);
++        Reader r; r.init(buf, w.n); Entry back;
++        return w.ok && get_entry(r, back) && !(e.flags & kLive);
++    }
++};
++
++// ---- HELLO reassembly ---------------------------------------------------------
++class Reassembler {
++public:
++    enum Status { kNeedMore, kComplete, kError };
++    uint16_t error = kOk;
++    std::string detail;
++    HelloInfo info{};
++    uint32_t session = 0;
++    std::vector<Entry> entries;
++
++    Status feed(const uint8_t *p, size_t n) {
++        if (state_ != kNeedMore) return state_;
++        Reader r; r.init(p, n);
++        Header h;
++        if (!get_header(r, h)) return fail(kMalformed, "truncated header");
++        if (h.version != kVersion) return fail(kBadVersion, "protocol version " + std::to_string(h.version));
++        if (h.type != kHello) return fail(kMalformed, "unexpected message type " + std::to_string(h.type));
++        if (h.count == 0 || h.count > kMaxChunks) return fail(kMalformed, "bad chunk count");
++        if (h.index != next_) return fail(kMalformed, "chunk " + std::to_string(h.index) + " out of order");
++        if (h.index == 0) {
++            count_ = h.count; session = h.session;
++            info.api_version = r.u32(); info.flags = (uint8_t)r.u8(); info.total = (uint16_t)r.u16(); r.bytes(info.digest, 32);
++            if (!r.ok) return fail(kMalformed, "truncated HELLO");
++            if (info.total > kMaxEntries) return fail(kLimit, "too many entries");
++        } else if (h.count != count_ || h.session != session) {
++            return fail(kMalformed, "chunk header mismatch");
++        }
++        unsigned k = r.u16();
++        if (!r.ok) return fail(kMalformed, "truncated chunk");
++        for (unsigned i = 0; i < k; ++i) {
++            Entry e;
++            if (!get_entry(r, e)) return fail(kMalformed, "bad entry");
++            if (entries.size() >= info.total) return fail(kMalformed, "more entries than announced");
++            entries.push_back(e);
++        }
++        if (r.left()) return fail(kMalformed, "trailing bytes");
++        if (++next_ < count_) return kNeedMore;
++        if (entries.size() != info.total) return fail(kMalformed, "entry count mismatch");
++        uint8_t d[32];
++        Digest dg; dg.init();
++        for (const Entry &e : entries) dg.add(e);
++        dg.final(d);
++        if (memcmp(d, info.digest, 32)) return fail(kMalformed, "digest mismatch");
++        ServerLedger dup;
++        for (const Entry &e : entries)
++            if (!dup.add(e)) return fail(kDuplicate, std::string("duplicate key or ID: ") + e.key);
++        state_ = kComplete;
++        return state_;
++    }
++
++private:
++    Status fail(uint16_t code, const std::string &why) { error = code; detail = why; state_ = kError; return state_; }
++    Status state_ = kNeedMore;
++    unsigned next_ = 0, count_ = 0;
++};
++
++// ---- merge ----------------------------------------------------------------------
++struct MergeResult {
++    uint8_t verdict = kAccept;
++    uint16_t code = kOk;
++    std::string message;               // ASCII, <= kMaxMessage, shown to the player
++    std::vector<std::string> log;      // full detail for the server log
++    std::vector<Entry> adopt;          // entries to append to the world ledger (accept only)
++    std::vector<uint16_t> allowed;     // custom item-space IDs this client may receive
++    unsigned missing_items = 0;        // server item entries the client lacks (allow_missing_items)
++};
++
++// `builtin(e)` returns true when e's ID is already used by the server's own
++// (non-placeholder) items/tiles.
++inline MergeResult merge(const ServerLedger &server, const std::vector<Entry> &client, const Policy &policy,
++                         const std::function<bool(const Entry &)> &builtin) {
++    MergeResult r;
++    struct Fail { uint16_t code; std::string msg; };
++    std::vector<Fail> fails;
++    auto desc = [](const Entry &e) { return std::string(kind_name(e.kind)) + " " + e.key + " (" + std::to_string(e.id) + ")"; };
++    ServerLedger after = server;
++    std::set<std::string> missing_mods;
++    unsigned missing_blocks = 0;
++
++    for (const Entry &c : client) {
++        if (!(c.flags & kLive)) {
++            const Entry *s = server.find(c.kind, c.key);
++            if (s && s->id != c.id)
++                r.log.push_back("note: unloaded client entry " + desc(c) + " differs from server ID " + std::to_string(s->id));
++            continue;
++        }
++        if (const Entry *s = server.find(c.kind, c.key)) {
++            if (s->id != c.id) {
++                fails.push_back({kKeyIdConflict, std::string(c.key) + " is " + kind_name(c.kind) + " " + std::to_string(s->id) +
++                                                     " on this server but " + std::to_string(c.id) + " on your console"});
++            } else if (!props_equal(*s, c)) {
++                fails.push_back({kPropsMismatch, std::string(c.key) + " has different properties (stack " + std::to_string(c.max_stack) +
++                                                     " vs " + std::to_string(s->max_stack) + "): different mod version"});
++            } else {
++                r.allowed.push_back((uint16_t)item_space_id(c));
++            }
++            continue;
++        }
++        const Entry *other = server.find_item_space(item_space_id(c));
++        if (!other && c.kind == kBlock) other = server.find_block(c.id);
++        if (other) {
++            fails.push_back({kIdTaken, std::string(kind_name(c.kind)) + " ID " + std::to_string(c.id) + " is " + other->key +
++                                           " on this server but " + c.key + " on your console"});
++            continue;
++        }
++        if (builtin(c)) {
++            fails.push_back({kIdBuiltin, desc(c) + " uses an ID this server already uses for built-in content"});
++            continue;
++        }
++        if (!policy.adopt) {
++            fails.push_back({kNotAllowed, std::string(c.key) + " is not installed on this server (server mod list is locked)"});
++            continue;
++        }
++        if (!after.add(c)) {
++            fails.push_back({kLimit, "server mod ID table is full"});
++            continue;
++        }
++        r.adopt.push_back(after.entries.back());
++        r.allowed.push_back((uint16_t)item_space_id(c));
++        r.log.push_back("adopt " + desc(c));
++    }
++
++    for (const Entry &s : server.entries) {
++        bool have = false;
++        for (const Entry &c : client)
++            if ((c.flags & kLive) && c.kind == s.kind && c.id == s.id && !strcmp(c.key, s.key)) { have = true; break; }
++        if (have) continue;
++        std::string key = s.key;
++        missing_mods.insert(key.substr(0, key.find(':')));
++        if (block_placeable(s)) ++missing_blocks; else ++r.missing_items;
++        r.log.push_back("client lacks " + desc(s));
++    }
++    if (!missing_mods.empty() && (missing_blocks || !policy.allow_missing_items)) {
++        std::string list;
++        unsigned shown = 0;
++        for (const std::string &m : missing_mods) {
++            if (shown == 4) { list += ", ..."; break; }
++            list += (shown++ ? ", " : "") + m;
++        }
++        fails.push_back({kMissing, "this world uses mod content you do not have: " + list});
++    }
++
++    if (fails.empty()) {
++        r.message = r.adopt.empty() ? "mod IDs match this world" : "mod IDs accepted; " + std::to_string(r.adopt.size()) + " new ID(s) recorded for this world";
++        if (r.missing_items) r.message += "; " + std::to_string(r.missing_items) + " item(s) from mods you lack are hidden";
++        return r;
++    }
++    r.verdict = kReject;
++    r.code = fails[0].code;
++    r.adopt.clear();
++    r.allowed.clear();
++    r.message = "Refused to protect your items: " + fails[0].msg + ".";
++    if (fails.size() > 1) r.message += " (+" + std::to_string(fails.size() - 1) + " more; see server log)";
++    for (const Fail &f : fails) r.log.push_back("refuse code " + std::to_string(f.code) + ": " + f.msg);
++    for (char &ch : r.message) if ((uint8_t)ch < 0x20 || (uint8_t)ch > 0x7e) ch = '?';
++    if (r.message.size() > kMaxMessage) r.message.resize(kMaxMessage);
++    return r;
++}
++
++// ---- server -> client messages -----------------------------------------------
++inline std::vector<uint8_t> encode_request(uint32_t session, const ServerLedger &ledger, const Policy &policy) {
++    std::vector<uint8_t> buf(kHeaderSize + 2 + 32 + 1);
++    Writer w; w.init(buf.data(), buf.size());
++    put_header(w, kRequest, session, 0, 1);
++    w.u16((uint32_t)ledger.entries.size());
++    uint8_t d[32]; ledger.digest(d); w.bytes(d, 32);
++    w.u8((policy.adopt ? kPolicyAdopt : 0) | (policy.allow_missing_items ? kPolicyAllowMissingItems : 0));
++    buf.resize(w.n);
++    return buf;
++}
++
++// RESULT followed by the server's authoritative table (TABLE chunks).
++inline std::vector<std::vector<uint8_t>> encode_result(uint32_t session, uint8_t verdict, uint16_t code, const std::string &message,
++                                                       const ServerLedger &ledger) {
++    std::vector<std::vector<uint8_t>> out;
++    unsigned first[kMaxChunks + 1];
++    const Entry *es = ledger.entries.empty() ? nullptr : ledger.entries.data();
++    unsigned chunks = ledger.entries.empty() ? 0 : plan_chunks(es, (unsigned)ledger.entries.size(), 0, first, kMaxChunks);
++    first[chunks] = (unsigned)ledger.entries.size();
++    std::string msg = message.substr(0, kMaxMessage);
++    std::vector<uint8_t> res(kHeaderSize + 5 + msg.size() + 2 + 32 + 1);
++    Writer w; w.init(res.data(), res.size());
++    put_header(w, kResult, session, 0, 1);
++    w.u8(verdict); w.u16(code); w.u16((uint32_t)msg.size()); w.bytes(msg.data(), msg.size());
++    w.u16((uint32_t)ledger.entries.size());
++    uint8_t d[32]; ledger.digest(d); w.bytes(d, 32);
++    w.u8(chunks);
++    res.resize(w.n);
++    out.push_back(res);
++    for (unsigned c = 0; c < chunks; ++c) {
++        std::vector<uint8_t> t(kChunkBudget);
++        Writer tw; tw.init(t.data(), t.size());
++        put_header(tw, kTable, session, c, chunks);
++        tw.u16(first[c + 1] - first[c]);
++        for (unsigned i = first[c]; i < first[c + 1]; ++i) put_entry(tw, ledger.entries[i]);
++        t.resize(tw.n);
++        out.push_back(t);
++    }
++    return out;
++}
++
++// Chat-sized lines (the PS4 chat line is short); splits at spaces.
++inline std::vector<std::string> chat_lines(const std::string &text, size_t width = 60) {
++    std::vector<std::string> lines;
++    std::string cur;
++    size_t p = 0;
++    while (p < text.size()) {
++        size_t sp = text.find(' ', p);
++        if (sp == std::string::npos) sp = text.size();
++        std::string word = text.substr(p, sp - p);
++        while (word.size() > width) { if (!cur.empty()) { lines.push_back(cur); cur.clear(); } lines.push_back(word.substr(0, width)); word = word.substr(width); }
++        if (!cur.empty() && cur.size() + 1 + word.size() > width) { lines.push_back(cur); cur.clear(); }
++        if (!word.empty()) cur += (cur.empty() ? "" : " ") + word;
++        p = sp + 1;
++    }
++    if (!cur.empty()) lines.push_back(cur);
++    return lines;
++}
++
++}  // namespace lce_modids
+--- /dev/null
++++ b/Minecraft.World/LceModIdRegistry.h
+@@ -0,0 +1,282 @@
++// LCE|ModIds engine glue (server): the world's mod ID ledger, placeholder
++// Item/Tile objects for those numeric IDs, and the per-connection gate that
++// keeps custom stacks away from clients that have not proven they know them.
++// Header-only (included by Connection.cpp and, through LceModIdHandshake.h,
++// PlayerConnection.cpp) so no CMake source list changes are needed.
++// Include after stdafx.h. See modloader-sdk/server/PROTOCOL.md.
++#pragma once
++#include <atomic>
++#include <memory>
++#include <mutex>
++#include <string>
++#include <unordered_map>
++#include <vector>
++#include <stdio.h>
++#include <stdlib.h>
++#ifdef _WIN32
++#include <direct.h>
++#else
++#include <sys/stat.h>
++#endif
++#include "LceModIdCore.h"
++#include "Item.h"
++#include "TileItem.h"
++#include "Tile.h"
++#include "Material.h"
++#include "ItemInstance.h"
++#include "ContainerSetSlotPacket.h"
++#include "ContainerSetContentPacket.h"
++#include "SetEquippedItemPacket.h"
++
++namespace lce_modids_srv {
++using lce_modids::Entry;
++
++constexpr int kItemSlots = Item::ITEM_NUM_COUNT;
++constexpr int kTileSlots = Tile::TILE_NUM_COUNT;
++
++// Stand-in for a mod item: correct ID, max stack and durability so stacks
++// validate, merge, persist and serialise. No behaviour (use/attack) on the
++// server; the description is the stick's so server-side messages stay valid.
++class PlaceholderItem : public Item {
++public:
++    PlaceholderItem(int absoluteId, int maxStack, int maxDamage) : Item(absoluteId - 256) {
++        setMaxStackSize(maxStack);
++        if (maxDamage > 0) setMaxDamage(maxDamage);
++        setDescriptionId(Item::stick->getDescriptionId());
++    }
++};
++
++// Stand-in for a mod block (ID < 256 only: the server's chunk storage is
++// 8-bit). Hardness matches the client so server-side dig validation agrees.
++class PlaceholderTile : public Tile {
++public:
++    static Material *material_for(unsigned m) {
++        switch (m) {
++        case 1: return Material::wood;
++        case 2: return Material::metal;
++        case 3: return Material::dirt;
++        case 4: return Material::sand;
++        case 5: return Material::glass;
++        case 6: return Material::plant;
++        case 7: return Material::cloth;
++        default: return Material::stone;
++        }
++    }
++    explicit PlaceholderTile(const Entry &e)
++        : Tile(e.id, material_for(e.material), !(e.flags & lce_modids::kTransparent)) {
++        setDestroyTime(e.a / 100.0f);
++        setExplodeable(e.b / 100.0f);
++        setDescriptionId(Tile::stone->getDescriptionId());
++    }
++};
++
++struct Registry {
++    std::mutex m;
++    lce_modids::ServerLedger ledger;
++    lce_modids::Policy policy;
++    std::string path;          // <world dir>/lce-mod-ids.txt
++    bool ready = false;
++    bool ownTile[kTileSlots] = {};
++};
++inline Registry &registry() { static Registry r; return r; }
++
++// Item-space IDs that are mod content on this server (read by write threads).
++inline std::atomic<bool> g_custom[kItemSlots];
++inline std::atomic<unsigned> g_customCount{0};
++
++inline bool is_custom_item(int id) {
++    return id >= 0 && id < kItemSlots && g_custom[id].load(std::memory_order_acquire);
++}
++
++// True if e's ID is already used by the server's own content (not ours).
++inline bool builtin_conflict(const Entry &e) {
++    Registry &r = registry();
++    auto itemTaken = [](uint32_t id) { return id >= (uint32_t)kItemSlots || (Item::items[id] != nullptr && !is_custom_item((int)id)); };
++    if (e.kind == lce_modids::kItem) return itemTaken(e.id);
++    if (e.id >= (uint32_t)kTileSlots) return true;
++    if (Tile::tiles[e.id] != nullptr && !r.ownTile[e.id]) return true;
++    return (e.flags & lce_modids::kBlockHasItem) && itemTaken(lce_modids::block_item_id(e.id));
++}
++
++// Creates the placeholder objects for one entry. Caller checked builtin_conflict.
++inline void register_entry(const Entry &e) {
++    Registry &r = registry();
++    if (e.kind == lce_modids::kItem) {
++        if (!is_custom_item(e.id)) {
++            new PlaceholderItem(e.id, e.max_stack, e.a);
++            g_custom[e.id].store(true, std::memory_order_release); ++g_customCount;
++        }
++        return;
++    }
++    const uint32_t itemId = lce_modids::block_item_id(e.id);
++    if (e.id < 256 && !r.ownTile[e.id]) {
++        new PlaceholderTile(e);
++        r.ownTile[e.id] = true;
++    }
++    if ((e.flags & lce_modids::kBlockHasItem) && !is_custom_item((int)itemId)) {
++        if (e.id < 256) (new TileItem(e.id - 256))->setMaxStackSize(e.max_stack);  // item e.id places tile e.id
++        else new PlaceholderItem((int)itemId, e.max_stack, 0);                        // item only: cannot be placed here
++        g_custom[itemId].store(true, std::memory_order_release); ++g_customCount;
++    }
++}
++
++inline bool read_text(const std::string &path, std::string &out, bool &exists) {
++    out.clear(); exists = false;
++    FILE *f = fopen(path.c_str(), "rb");
++    if (!f) return true;
++    exists = true;
++    char buf[4096]; size_t n;
++    while ((n = fread(buf, 1, sizeof buf, f)) > 0) { out.append(buf, n); if (out.size() > (1u << 20)) { fclose(f); return false; } }
++    bool ok = !ferror(f);
++    fclose(f);
++    return ok;
++}
++
++inline bool write_text_atomic(const std::string &path, const std::string &text) {
++    const std::string tmp = path + ".tmp";
++    FILE *f = fopen(tmp.c_str(), "wb");
++    if (!f) return false;
++    bool ok = fwrite(text.data(), 1, text.size(), f) == text.size();
++    ok = (fflush(f) == 0) && ok;
++    ok = (fclose(f) == 0) && ok;
++    if (!ok) { remove(tmp.c_str()); return false; }
++#ifdef _WIN32
++    if (!MoveFileExA(tmp.c_str(), path.c_str(), MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH)) { remove(tmp.c_str()); return false; }
++#else
++    if (rename(tmp.c_str(), path.c_str()) != 0) { remove(tmp.c_str()); return false; }
++#endif
++    return true;
++}
++
++inline void make_dirs(const std::string &dir) {
++    for (size_t i = 1; i <= dir.size(); ++i) {
++        if (i != dir.size() && dir[i] != '/' && dir[i] != '\\') continue;
++        std::string part = dir.substr(0, i);
++#ifdef _WIN32
++        _mkdir(part.c_str());
++#else
++        mkdir(part.c_str(), 0755);
++#endif
++    }
++}
++
++// Policy file in the server directory: words "locked" and/or
++// "allow-missing-items". Environment LCE_MODIDS_POLICY overrides it.
++inline lce_modids::Policy read_policy() {
++    std::string text; bool exists = false;
++    if (const char *env = getenv("LCE_MODIDS_POLICY")) text = env;
++    else read_text("lce-modids-policy.txt", text, exists);
++    lce_modids::Policy p;
++    if (text.find("locked") != std::string::npos) p.adopt = false;
++    if (text.find("allow-missing-items") != std::string::npos) p.allow_missing_items = true;
++    return p;
++}
++
++// Server start, after the world is chosen and BEFORE it loads (so saved
++// stacks/chunks of mod content find their Item/Tile). Returns false (with
++// *err) if the ledger is unreadable or no longer fits this server build: the
++// caller must not start the world, because loading it would drop mod stacks.
++inline bool startup(const std::string &worldDir, std::string *err) {
++    Registry &r = registry();
++    std::lock_guard<std::mutex> lock(r.m);
++    r.path = worldDir + "/lce-mod-ids.txt";
++    r.policy = read_policy();
++    std::string text; bool exists = false;
++    if (!read_text(r.path, text, exists)) { *err = "cannot read " + r.path; return false; }
++    const auto st = r.ledger.load(text);
++    if (st != lce_modids::ServerLedger::kLoaded) {
++        *err = r.path + (st == lce_modids::ServerLedger::kBadHash ? ": checksum mismatch" : ": corrupt") +
++               " (restore lce-mod-ids.txt.bak or fix the file; refusing to load the world)";
++        r.ledger.entries.clear();
++        return false;
++    }
++    for (const Entry &e : r.ledger.entries) {
++        if (builtin_conflict(e)) {
++            *err = std::string("world mod ID ") + e.key + " (" + std::to_string(e.id) + ") is now used by this server build";
++            return false;
++        }
++    }
++    for (const Entry &e : r.ledger.entries) register_entry(e);
++    r.ready = true;
++    fprintf(stderr, "[modids] world ledger %s: %u entries, policy adopt=%d allow-missing-items=%d\n", r.path.c_str(),
++            (unsigned)r.ledger.entries.size(), r.policy.adopt ? 1 : 0, r.policy.allow_missing_items ? 1 : 0);
++    fflush(stderr);
++    return true;
++}
++
++// Persists first, then registers: an ID is only ever live if it is on disk.
++inline bool adopt(const std::vector<Entry> &entries, std::string *err) {
++    Registry &r = registry();
++    if (entries.empty()) return true;
++    lce_modids::ServerLedger next = r.ledger;
++    for (const Entry &e : entries) if (!next.add(e)) { *err = std::string("ledger rejects ") + e.key; return false; }
++    if (!r.ledger.entries.empty()) (void)write_text_atomic(r.path + ".bak", r.ledger.serialize());
++    size_t slash = r.path.find_last_of("/\\");
++    if (slash != std::string::npos) make_dirs(r.path.substr(0, slash));
++    if (!write_text_atomic(r.path, next.serialize())) { *err = "cannot write " + r.path; return false; }
++    r.ledger = next;
++    for (const Entry &e : entries) register_entry(e);
++    return true;
++}
++
++// ---- per-connection gate ------------------------------------------------------
++struct Gate {
++    std::mutex m;
++    std::unordered_map<const void *, std::vector<bool>> allowed;
++};
++inline Gate &gate() { static Gate g; return g; }
++
++inline void gate_set(const void *conn, const std::vector<uint16_t> &ids) {
++    std::vector<bool> bits(kItemSlots, false);
++    for (uint16_t id : ids) if (id < kItemSlots) bits[id] = true;
++    std::lock_guard<std::mutex> lock(gate().m);
++    gate().allowed[conn] = std::move(bits);
++}
++inline void gate_forget(const void *conn) {
++    std::lock_guard<std::mutex> lock(gate().m);
++    gate().allowed.erase(conn);
++}
++// Vanilla IDs always pass; a custom ID passes only after this connection's
++// handshake accepted it.
++inline bool gate_allows(const void *conn, int itemId) {
++    if (!is_custom_item(itemId)) return true;
++    std::lock_guard<std::mutex> lock(gate().m);
++    auto it = gate().allowed.find(conn);
++    return it != gate().allowed.end() && it->second[itemId];
++}
++
++// Called by Connection::writePS4Packet for every outgoing packet. May replace
++// `packet` with a copy whose disallowed custom stacks are emptied; returns
++// false if the packet must be dropped.
++inline bool filter_outgoing(const void *conn, shared_ptr<Packet> &packet) {
++    if (g_customCount.load(std::memory_order_acquire) == 0 || !packet) return true;
++    switch (packet->getId()) {
++    case 103: {
++        auto p = std::dynamic_pointer_cast<ContainerSetSlotPacket>(packet);
++        if (p && p->item && !gate_allows(conn, p->item->id))
++            packet = std::make_shared<ContainerSetSlotPacket>(p->containerId, p->slot, nullptr);
++        return true;
++    }
++    case 104: {
++        auto p = std::dynamic_pointer_cast<ContainerSetContentPacket>(packet);
++        if (!p) return true;
++        bool changed = false;
++        std::vector<shared_ptr<ItemInstance>> items(p->items.length);
++        for (unsigned i = 0; i < p->items.length; ++i) {
++            items[i] = p->items[i];
++            if (items[i] && !gate_allows(conn, items[i]->id)) { items[i] = nullptr; changed = true; }
++        }
++        if (changed) packet = std::make_shared<ContainerSetContentPacket>(p->containerId, &items);
++        return true;
++    }
++    case 5: {
++        auto p = std::dynamic_pointer_cast<SetEquippedItemPacket>(packet);
++        auto item = p ? p->getItem() : nullptr;
++        return !(item && !gate_allows(conn, item->id));
++    }
++    default:
++        return true;
++    }
++}
++
++}  // namespace lce_modids_srv
+--- /dev/null
++++ b/Minecraft.Client/LceModIdHandshake.h
+@@ -0,0 +1,171 @@
++// LCE|ModIds handshake (server side), included by PlayerConnection.cpp only.
++// All functions run on the server main thread (PlayerConnection::tick and
++// packet handling); PlayerConnection passes its private state explicitly.
++// See modloader-sdk/server/PROTOCOL.md.
++#pragma once
++#include <algorithm>
++#include <chrono>
++#include <memory>
++#include <random>
++#include <string>
++#include <unordered_map>
++#include "../Minecraft.World/LceModIdRegistry.h"
++#include "../Minecraft.World/CustomPayloadPacket.h"
++
++namespace lce_modids_srv {
++
++constexpr int kHelloTimeoutTicks = 200;  // 10 s at 20 TPS
++constexpr int kKickDelayTicks = 60;      // let the chat lines/RESULT arrive before the disconnect
++
++struct Session {
++    uint32_t nonce = 0;
++    int startTick = 0;
++    int kickAt = -1;
++    bool decided = false;
++    std::unique_ptr<lce_modids::Reassembler> hello;
++};
++inline std::unordered_map<const void *, Session> &sessions() {
++    static std::unordered_map<const void *, Session> s;
++    return s;
++}
++
++inline std::wstring channel() { return std::wstring(lce_modids::kChannel, lce_modids::kChannel + lce_modids::kChannelLen); }
++inline std::wstring widen_ascii(const std::string &s) { return std::wstring(s.begin(), s.end()); }
++
++template <class PC>
++void send_frame(PC *pc, const std::vector<uint8_t> &payload) {
++    if (payload.empty()) return;
++    byteArray bytes(static_cast<unsigned>(payload.size()));
++    memcpy(bytes.data, payload.data(), payload.size());
++    auto packet = std::make_shared<CustomPayloadPacket>(channel(), bytes);
++    // Whole-frame delivery (see LceDebugEngine.h): the PS4 plugin matches
++    // [250][LCE|ModIds] frames exactly and keeps them from the retail client.
++    packet->shouldDelay = true;
++    pc->queueSend(packet);
++}
++
++template <class PC, class Player>
++void decide(PC *pc, const void *conn, Player &player, Session &s, int tickCount, uint8_t verdict, uint16_t code,
++            const std::string &message) {
++    Registry &r = registry();
++    s.decided = true;
++    s.hello.reset();
++    {
++        std::lock_guard<std::mutex> lock(r.m);
++        for (const auto &frame : lce_modids::encode_result(s.nonce, verdict, code, message, r.ledger)) send_frame(pc, frame);
++    }
++    fprintf(stderr, "[modids] %ls: %s code=%u: %s\n", player->getName().c_str(), verdict == lce_modids::kAccept ? "accept" : "REFUSE",
++            (unsigned)code, message.c_str());
++    fflush(stderr);
++    if (verdict != lce_modids::kAccept) {
++        gate_forget(conn);
++        for (const std::string &line : lce_modids::chat_lines("[Mods] " + message)) player->sendMessage(widen_ascii(line));
++        s.kickAt = tickCount + kKickDelayTicks;
++    }
++}
++
++// PlayerConnection::tick, after connection->tick() (done == false).
++template <class PC, class Player>
++void tick(PC *pc, const void *conn, Player &player, int tickCount) {
++    auto &all = sessions();
++    auto it = all.find(pc);
++    if (it == all.end()) {
++        static std::mt19937 rng(static_cast<uint32_t>(std::chrono::steady_clock::now().time_since_epoch().count()));
++        Session s;
++        s.nonce = rng() | 1u;
++        s.startTick = tickCount;
++        s.hello.reset(new lce_modids::Reassembler());
++        Registry &r = registry();
++        std::vector<uint8_t> request;
++        {
++            std::lock_guard<std::mutex> lock(r.m);
++            request = lce_modids::encode_request(s.nonce, r.ledger, r.policy);
++        }
++        all.emplace(pc, std::move(s));
++        send_frame(pc, request);
++        return;
++    }
++    Session &s = it->second;
++    if (s.kickAt >= 0) {
++        if (tickCount >= s.kickAt) { s.kickAt = -1; pc->disconnect(DisconnectPacket::eDisconnect_Kicked); }
++        return;
++    }
++    if (s.decided || tickCount - s.startTick < kHelloTimeoutTicks) return;
++    // No (complete) HELLO. A world without mod IDs needs nothing; with item-only
++    // mod IDs and allow-missing-items the client stays, with mod stacks hidden.
++    Registry &r = registry();
++    bool needs = false, placeable = false;
++    {
++        std::lock_guard<std::mutex> lock(r.m);
++        needs = !r.ledger.entries.empty();
++        for (const Entry &e : r.ledger.entries) placeable |= lce_modids::block_placeable(e);
++        if (needs && r.policy.allow_missing_items && !placeable) needs = false;
++    }
++    if (!needs) { s.decided = true; s.hello.reset(); return; }
++    decide(pc, conn, player, s, tickCount, lce_modids::kReject, lce_modids::kTimeout,
++           "Refused to protect your items: this world uses mod content and your console did not report its mod IDs. "
++           "Install the LCE mod loader with the same mods, or play offline.");
++}
++
++// Top of PlayerConnection::handleCustomPayload. Returns true if the packet was
++// an LCE|ModIds message (handled here).
++template <class PC, class Player>
++bool handle_payload(PC *pc, const void *conn, Player &player, const shared_ptr<CustomPayloadPacket> &packet, int tickCount) {
++    if (!packet || channel().compare(packet->identifier) != 0) return false;
++    auto it = sessions().find(pc);
++    if (it == sessions().end() || it->second.decided || !it->second.hello) return true;  // unsolicited / late: ignore
++    Session &s = it->second;
++    size_t n = 0;
++    if (packet->data.data && packet->length > 0) n = static_cast<size_t>(packet->length) < packet->data.length ? static_cast<size_t>(packet->length) : packet->data.length;
++    auto st = s.hello->feed(reinterpret_cast<const uint8_t *>(packet->data.data), n);
++    if (st == lce_modids::Reassembler::kNeedMore) return true;
++    if (st == lce_modids::Reassembler::kError) {
++        fprintf(stderr, "[modids] bad HELLO: %s\n", s.hello->detail.c_str());
++        decide(pc, conn, player, s, tickCount, lce_modids::kReject, s.hello->error,
++               "Refused: your console sent an unreadable mod ID table (" + s.hello->detail + ").");
++        return true;
++    }
++    if (s.hello->session != s.nonce) {
++        decide(pc, conn, player, s, tickCount, lce_modids::kReject, lce_modids::kMalformed, "Refused: mod ID handshake session mismatch.");
++        return true;
++    }
++    Registry &r = registry();
++    lce_modids::MergeResult m;
++    std::string err;
++    bool persisted = true;
++    {
++        std::lock_guard<std::mutex> lock(r.m);
++        if (!r.ready) {
++            m.verdict = lce_modids::kReject; m.code = lce_modids::kServerLedgerBad;
++            m.message = "Refused: this server's mod ID table is not available.";
++        } else {
++            m = lce_modids::merge(r.ledger, s.hello->entries, r.policy, builtin_conflict);
++            if (m.verdict == lce_modids::kAccept) persisted = adopt(m.adopt, &err);
++        }
++    }
++    for (const std::string &line : m.log) fprintf(stderr, "[modids] %ls: %s\n", player->getName().c_str(), line.c_str());
++    if (!persisted) {
++        fprintf(stderr, "[modids] ledger write failed: %s\n", err.c_str());
++        decide(pc, conn, player, s, tickCount, lce_modids::kReject, lce_modids::kServerLedgerBad,
++               "Refused: the server could not record this world's mod IDs.");
++        return true;
++    }
++    if (m.verdict == lce_modids::kAccept) {
++        gate_set(conn, m.allowed);
++        // Stacks withheld before the handshake (inventory, open container) are resent now.
++        player->refreshContainer(player->inventoryMenu);
++        if (player->containerMenu && player->containerMenu != player->inventoryMenu) player->refreshContainer(player->containerMenu);
++        if (!m.adopt.empty() || m.missing_items)
++            for (const std::string &line : lce_modids::chat_lines("[Mods] " + m.message)) player->sendMessage(widen_ascii(line));
++    }
++    decide(pc, conn, player, s, tickCount, m.verdict, m.code, m.message);
++    return true;
++}
++
++// ~PlayerConnection (before the Connection is deleted).
++inline void forget(const void *pc, const void *conn) {
++    sessions().erase(pc);
++    gate_forget(conn);
++}
++
++}  // namespace lce_modids_srv

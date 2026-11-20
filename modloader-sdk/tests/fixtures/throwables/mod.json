@@ -1,0 +1,48 @@
+{
+ "format": 1,
+ "id": "throwables",
+ "name": "Throwables (API 1.9)",
+ "version": "1.0.0",
+ "author": "tests",
+ "description": "API 1.9 thrown items: a fast ruby shard (damage + slowness), a fire bomb (fire + small explosion) and a plain frost pebble (snowball defaults). They fly and render as snowballs.",
+ "textures": {
+  "throwables:ruby_shard": "textures/ruby_shard.png",
+  "throwables:fire_bomb": "textures/fire_bomb.png",
+  "throwables:frost_pebble": "textures/frost_pebble.png"
+ },
+ "items": [
+  {
+   "key": "throwables:ruby_shard",
+   "name": "Ruby Shard",
+   "texture": "throwables:ruby_shard",
+   "creative_tab": "minecraft:combat",
+   "max_stack": 16,
+   "throwable": {"speed": 2.0, "inaccuracy": 0.5, "damage": 4, "effects": [{"effect": "minecraft:slowness", "duration": 100, "amplifier": 1}]}
+  },
+  {
+   "key": "throwables:fire_bomb",
+   "name": "Fire Bomb",
+   "texture": "throwables:fire_bomb",
+   "creative_tab": "minecraft:combat",
+   "max_stack": 16,
+   "throwable": {"speed": 1.2, "damage": 2, "fire_ticks": 100, "explode": 1.5}
+  },
+  {
+   "key": "throwables:frost_pebble",
+   "name": "Frost Pebble",
+   "texture": "throwables:frost_pebble",
+   "creative_tab": "minecraft:combat",
+   "max_stack": 16,
+   "throwable": true
+  }
+ ],
+ "recipes": [
+  {"key": "throwables:ruby_shard", "type": "shapeless", "ingredients": ["minecraft:redstone", "minecraft:flint"], "result": "throwables:ruby_shard", "count": 4, "craft_tab": "minecraft:tools"},
+  {"key": "throwables:fire_bomb", "type": "shapeless", "ingredients": ["minecraft:gunpowder", "minecraft:coal"], "result": "throwables:fire_bomb", "count": 2, "craft_tab": "minecraft:tools"},
+  {"key": "throwables:frost_pebble", "type": "shapeless", "ingredients": ["minecraft:snowball", "minecraft:cobblestone"], "result": "throwables:frost_pebble", "count": 4, "craft_tab": "minecraft:tools"}
+ ],
+ "scripts": {"main.lua": "scripts/main.lua"},
+ "lang": {
+  "en_US": {"throwables:ruby_shard": "Ruby Shard", "throwables:fire_bomb": "Fire Bomb", "throwables:frost_pebble": "Frost Pebble"}
+ }
+}

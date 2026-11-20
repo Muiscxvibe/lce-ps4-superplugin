@@ -1,0 +1,48 @@
+{
+  "items": {
+    "ruby_pickaxe": {
+      "kind": "pickaxe",
+      "tier": "iron",
+      "max_damage": 900
+    },
+    "ruby_apple": {
+      "kind": "food",
+      "food": {
+        "hunger": 6,
+        "saturation": 0.8
+      }
+    }
+  },
+  "blocks": {
+    "ruby_block": {
+      "hardness": 5.0,
+      "resistance": 30.0,
+      "material": "metal",
+      "sound": "metal",
+      "harvest_tier": "iron",
+      "creative_tab": "minecraft:building_blocks"
+    },
+    "ruby_ore": {
+      "hardness": 3.0,
+      "resistance": 15.0,
+      "material": "stone",
+      "sound": "stone",
+      "harvest_tier": "iron",
+      "drop": "rubymod:ruby",
+      "drops": [
+        1,
+        2
+      ]
+    }
+  },
+  "craft_tab": "minecraft:materials",
+  "tabs": [
+    {
+      "key": "rubymod:rubies",
+      "name": "Rubies",
+      "icon": "rubymod:ruby",
+      "creative": true,
+      "crafting": true
+    }
+  ]
+}

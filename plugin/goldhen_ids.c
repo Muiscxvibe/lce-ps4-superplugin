@@ -1,5 +1,8 @@
 #define _BSD_SOURCE 1
 #define _DEFAULT_SOURCE 1
+#if defined(LCE_OFFLINE_PREVIEW)
+int lce_console_ids_restore_failed(void) { return 0; }
+#else
 /* Console identity via GoldHEN (PS4 only).
  *
  * sceKernelGetIdPs / sceKernelGetOpenPsIdForSystem are privileged: from the
@@ -46,22 +49,37 @@ long lce_goldhen_syscall(long number, uint64_t cmd, void *data);
 void mc195_remote_log(const char *);
 int snprintf(char *, size_t, const char *, ...);
 static void logf3(const char *what, long a, long b) {
+#if defined(LCE_RELEASE)
+    (void)what; (void)a; (void)b;          /* release: only the summary line below */
+#else
     char line[160];
     snprintf(line, sizeof line, "Console IDs: %s %ld %ld\n", what, a, b);
     mc195_remote_log(line);
+#endif
 }
 
 static int sdk_cmd(uint64_t cmd, void *data) { return (int)lce_goldhen_syscall(500, cmd, data); }
 
 static sigjmp_buf guard_jmp;
 static volatile sig_atomic_t guard_armed;
+static volatile int guard_thread;
 static int32_t guard_rc;
-static void guard_handler(int sig) { (void)sig; if (guard_armed) siglongjmp(guard_jmp, 1); }
+static struct sigaction old_sys, old_segv, old_bus;
+/* The handlers are process-wide while armed. A fault on any other thread is
+   not ours: put that signal's previous disposition back and return, so the
+   faulting instruction re-executes under the game's/crash logger's handler
+   (never longjmp onto another thread's stack). */
+static void guard_handler(int sig) {
+    if (guard_armed && scePthreadGetthreadid() == guard_thread) siglongjmp(guard_jmp, 1);
+    const struct sigaction *old = sig == SIGSYS ? &old_sys : sig == SIGSEGV ? &old_segv : &old_bus;
+    sigaction(sig, old, NULL);
+}
 
 /* Run fn(out) with SIGSYS/SIGSEGV/SIGBUS turned into a clean failure. */
 static int guarded(int32_t (*fn)(void *), void *out) {
-    struct sigaction sa, old_sys, old_segv, old_bus;
+    struct sigaction sa;
     int ok = 0;
+    guard_thread = scePthreadGetthreadid();
     memset(&sa, 0, sizeof sa);
     sa.sa_handler = guard_handler;
     sigemptyset(&sa.sa_mask);
@@ -89,6 +107,9 @@ static int nonzero(const uint8_t *p, size_t n) { for (size_t i = 0; i < n; ++i) 
 static int cached;
 static uint8_t cache_idps[16], cache_psid[16];
 static int have_idps, have_psid;
+static int restore_failed;
+/* 1 if GoldHEN could not restore the game's credentials (stays jailbroken). */
+int lce_console_ids_restore_failed(void) { return restore_failed; }
 
 int lce_console_ids_privileged(uint8_t *idps, uint8_t *psid) {
     if (!cached) {
@@ -113,11 +134,21 @@ int lce_console_ids_privileged(uint8_t *idps, uint8_t *psid) {
         int b = guarded(get_openpsid, buf);
         logf3("openpsid ok / rc", b, (long)guard_rc); logf3("openpsid nonzero", nonzero(buf, 16), 0);
         if (b && nonzero(buf, 16)) { memcpy(cache_psid, buf, 16); have_psid = 1; }
-        int un = sdk_cmd(GOLDHEN_SDK_CMD_UNJAILBREAK, &backup);          /* always restore credentials */
+        /* Always restore the original credentials/sandbox; retry, a jailbroken
+           game process must not keep running with root and no sandbox. */
+        int un = -1;
+        for (int attempt = 0; attempt < 3 && un != 0; ++attempt) un = sdk_cmd(GOLDHEN_SDK_CMD_UNJAILBREAK, &backup);
         logf3("unjailbreak rc", un, 0);
+        restore_failed = un != 0;
+        memset(&backup, 0, sizeof backup);
+        char line[96];
+        snprintf(line, sizeof line, "Console IDs: idps=%d psid=%d restore=%s\n", have_idps, have_psid, un == 0 ? "ok" : "FAILED");
+        mc195_remote_log(line);
     }
+    if (restore_failed) return 0;
     if (!have_idps && !have_psid) return 0;
     memcpy(idps, cache_idps, 16);
     memcpy(psid, cache_psid, 16);
     return 1;
 }
+#endif

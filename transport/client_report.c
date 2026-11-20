@@ -68,17 +68,19 @@ static int put_str(char *o,size_t cap,size_t *n,const char *s) {
 }
 static void hex(const uint8_t *b,size_t len,char *out) { static const char d[]="0123456789abcdef"; for (size_t i=0;i<len;++i){out[2*i]=d[b[i]>>4];out[2*i+1]=d[b[i]&15];} out[2*len]=0; }
 static int body(char *o,size_t cap,size_t *n,const char *device,const char *plugin,const char *game,const char *text,
-                const char *hw,const char *const *mods,size_t count,int debug,int canonical) {
+                const char *hw,int ik,const char *const *mods,size_t count,int debug,int canonical) {
     /* canonical: sorted keys incl. device_id; report: plugin first, no device_id */
     if (canonical) {
         if (!put(o,cap,n,"{\"debug\":")||!put(o,cap,n,debug?"true":"false")||!put(o,cap,n,",\"device_id\":")||!put_str(o,cap,n,device)||
             !put(o,cap,n,",\"game\":")||!put_str(o,cap,n,game)) return 0;
         if (hw && (!put(o,cap,n,",\"hw\":")||!put_str(o,cap,n,hw))) return 0;
+        if (ik && !put(o,cap,n,",\"ik\":1")) return 0;
         if (!put(o,cap,n,",\"modules\":[")) return 0;
     } else {
         if (!put(o,cap,n,"{\"plugin\":")||!put_str(o,cap,n,plugin)||!put(o,cap,n,",\"game\":")||!put_str(o,cap,n,game)||
             !put(o,cap,n,",\"text\":")||!put_str(o,cap,n,text)||!put(o,cap,n,",\"debug\":")||!put(o,cap,n,debug?"true":"false")) return 0;
         if (hw && (!put(o,cap,n,",\"hw\":")||!put_str(o,cap,n,hw))) return 0;
+        if (ik && !put(o,cap,n,",\"ik\":1")) return 0;
         if (!put(o,cap,n,",\"modules\":[")) return 0;
     }
     for (size_t i=0;i<count;++i) if ((i&&!put(o,cap,n,","))||!put_str(o,cap,n,mods[i])) return 0;
@@ -86,14 +88,58 @@ static int body(char *o,size_t cap,size_t *n,const char *device,const char *plug
     if (canonical && (!put(o,cap,n,",\"plugin\":")||!put_str(o,cap,n,plugin)||!put(o,cap,n,",\"text\":")||!put_str(o,cap,n,text)||!put(o,cap,n,"}"))) return 0;
     return 1;
 }
+int lce_client_report_format_ik(char *out,size_t cap,const char *device,const char *plugin,const char *game,const char *text_hex,
+                                const char *hw,const char *const *mods,size_t count,int debug,const uint8_t *key,size_t key_len,
+                                int ik,const uint8_t *install_key) {
+    char canon[3072]; size_t cn=0, n=0; uint8_t mac[32]; char machex[65];
+    if (!out||!cap||!device||!plugin||!game||!text_hex||!key||(install_key&&!ik)) return 0;
+    canon[0]=0; out[0]=0;
+    if (!body(canon,sizeof canon,&cn,device,plugin,game,text_hex,hw,ik,mods,count,debug,1)) return 0;
+    lce_hmac_sha256(key,key_len,(const uint8_t *)canon,cn,mac); hex(mac,32,machex);
+    if (!body(out,cap,&n,device,plugin,game,text_hex,hw,ik,mods,count,debug,0)||!put(out,cap,&n,",\"mac\":")||!put_str(out,cap,&n,machex)) { out[0]=0; return 0; }
+    if (install_key) {
+        lce_hmac_sha256(install_key,32,(const uint8_t *)canon,cn,mac); hex(mac,32,machex);
+        if (!put(out,cap,&n,",\"imac\":")||!put_str(out,cap,&n,machex)) { out[0]=0; return 0; }
+    }
+    if (!put(out,cap,&n,"}")) { out[0]=0; return 0; }
+    return 1;
+}
 int lce_client_report_format_hw(char *out,size_t cap,const char *device,const char *plugin,const char *game,const char *text_hex,
                                 const char *hw,const char *const *mods,size_t count,int debug,const uint8_t *key,size_t key_len) {
-    char canon[3072]; size_t cn=0, n=0; uint8_t mac[32]; char machex[65];
-    if (!out||!cap||!device||!plugin||!game||!text_hex||!key) return 0;
-    canon[0]=0; out[0]=0;
-    if (!body(canon,sizeof canon,&cn,device,plugin,game,text_hex,hw,mods,count,debug,1)) return 0;
-    lce_hmac_sha256(key,key_len,(const uint8_t *)canon,cn,mac); hex(mac,32,machex);
-    if (!body(out,cap,&n,device,plugin,game,text_hex,hw,mods,count,debug,0)||!put(out,cap,&n,",\"mac\":")||!put_str(out,cap,&n,machex)||!put(out,cap,&n,"}")) { out[0]=0; return 0; }
+    return lce_client_report_format_ik(out,cap,device,plugin,game,text_hex,hw,mods,count,debug,key,key_len,0,NULL);
+}
+
+/* ---- per-install key (provisioned by the account server) ---- */
+static uint8_t install_key_value[32];
+static volatile int install_key_set;
+void lce_client_report_set_install_key(const uint8_t *key) {
+    __atomic_store_n(&install_key_set,0,__ATOMIC_RELEASE);
+    if (key) { memcpy(install_key_value,key,32); __atomic_store_n(&install_key_set,1,__ATOMIC_RELEASE); }
+    else { volatile uint8_t *p=install_key_value; for (size_t i=0;i<32;++i) p[i]=0; }
+}
+int lce_client_report_has_install_key(void) { return __atomic_load_n(&install_key_set,__ATOMIC_ACQUIRE); }
+
+/* ---- per-server pseudonymous console identifiers ----
+   Raw IDPS/OpenPSID/MAC are stable hardware identifiers. A plugin that talks
+   to third-party servers should not hand them out: each value is replaced by
+   HMAC-SHA256(salt, "<kind>:<raw hex>") truncated to the field's length,
+   where salt is the account service URL. Bans on one server still work (the
+   value is stable per console and server), but servers cannot correlate
+   consoles or learn the real IDs. */
+static char hw_salt[512];
+void lce_client_report_set_hw_salt(const char *salt) {
+    size_t n=0;
+    if (salt) for (; salt[n] && n+1<sizeof hw_salt; ++n) hw_salt[n]=salt[n];
+    hw_salt[n]=0;
+}
+int lce_client_report_pseudonym(const char *salt,const char *kind,const uint8_t *raw,size_t len,char *out_hex) {
+    char msg[8+129]; size_t k=0; uint8_t mac[32];
+    if (!salt||!*salt||!kind||!raw||!out_hex||!len||len>32) return 0;
+    for (; kind[k] && k<7; ++k) msg[k]=kind[k];
+    if (kind[k]) return 0;
+    msg[k++]=':'; hex(raw,len,msg+k); k+=2*len;
+    lce_hmac_sha256((const uint8_t *)salt,strlen(salt),(const uint8_t *)msg,k,mac);
+    hex(mac,len,out_hex);
     return 1;
 }
 int lce_client_report_format(char *out,size_t cap,const char *device,const char *plugin,const char *game,const char *text_hex,
@@ -101,7 +147,14 @@ int lce_client_report_format(char *out,size_t cap,const char *device,const char 
     return lce_client_report_format_hw(out,cap,device,plugin,game,text_hex,NULL,mods,count,debug,key,key_len);
 }
 
-#if defined(__FreeBSD__) || defined(__ORBIS__) || defined(MC_SUPER195)
+#if defined(LCE_OFFLINE_PREVIEW)
+/* Preview builds cannot sign or submit a server report. Never fabricate a MAC. */
+int lce_client_report_build(char *out,size_t cap,const char *device,uintptr_t game_base,int debug_used) {
+    (void)device; (void)game_base; (void)debug_used;
+    if (out && cap) out[0]=0;
+    return 0;
+}
+#elif defined(__FreeBSD__) || defined(__ORBIS__) || defined(MC_SUPER195)
 #include <orbis/libkernel.h>
 #include "client_report_key.h"   /* static const uint8_t lce_client_report_key[32] */
 static int read_app_version(char out[8]) {
@@ -118,12 +171,26 @@ static int read_app_version(char out[8]) {
     return 0;
 }
 #include <orbis/Net.h>
+/* Weak: canonical game-code hash with recorded mod patches reverted. The
+   default (no mod_gate linked) returns 0 so the raw segment is hashed. */
+__attribute__((weak)) int lce_mod_text_sha256(uint64_t base,const uint8_t *addr,size_t size,uint8_t out[32]) {
+    (void)base; (void)addr; (void)size; (void)out; return 0;
+}
 /* Per-console identifiers for bans (bans are per console, not per user).
    Format: "idps:<32 hex>;psid:<32 hex>;mac:<12 hex>;fw:<8 hex>" with any
    unavailable field omitted. They are read by client code, so they raise the
    cost of ban evasion but are not unforgeable on a jailbroken console. */
+static int any_nonzero(const uint8_t *b,size_t len) { for (size_t i=0;i<len;++i) if (b[i]) return 1; return 0; }
 static void put_hex_field(char *out,size_t cap,size_t *n,const char *key,const uint8_t *b,size_t len) {
-    char h[129]; if (len>64) return; hex(b,len,h);
+    char h[129]; if (len>32) return;
+#if defined(LCE_HW_PSEUDONYMS)
+    /* fw is informational, not an identifier; console ids are pseudonymised.
+       Unset salt or an all-zero (unavailable) value: omit the field. */
+    if (strcmp(key,"fw")) { if (!any_nonzero(b,len) || !lce_client_report_pseudonym(hw_salt,key,b,len,h)) return; }
+    else hex(b,len,h);
+#else
+    (void)any_nonzero; hex(b,len,h);
+#endif
     put(out,cap,n,*n?";":""); put(out,cap,n,key); put(out,cap,n,":"); put(out,cap,n,h);
 }
 __attribute__((weak)) int lce_console_ids_privileged(uint8_t *idps,uint8_t *psid) { (void)idps; (void)psid; return 0; }
@@ -154,7 +221,16 @@ int lce_client_report_build(char *out,size_t cap,const char *device,uintptr_t ga
         OrbisKernelModuleInfo m; memset(&m,0,sizeof m); m.size=sizeof m;
         if (sceKernelGetModuleInfo(handles[i],&m)!=0) continue;
         if (m.segmentCount && (uintptr_t)m.segmentInfo[0].address==game_base && m.segmentInfo[0].size) {
-            uint8_t digest[32]; lce_sha256((const uint8_t *)m.segmentInfo[0].address,m.segmentInfo[0].size,digest); hex(digest,32,text_hex);
+            uint8_t digest[32];
+            /* Content mods patch the game .text; lce_mod_text_sha256 (weak,
+               provided by mod_gate) hashes a canonical image with ONLY the
+               recorded mod patch sites reverted to their pristine bytes, so a
+               console running mods locally reports the mods-off code hash while
+               any other modification still hashes as modified. Absent/failed:
+               hash the live segment unchanged. */
+            if (!lce_mod_text_sha256(game_base,(const uint8_t *)m.segmentInfo[0].address,m.segmentInfo[0].size,digest))
+                lce_sha256((const uint8_t *)m.segmentInfo[0].address,m.segmentInfo[0].size,digest);
+            hex(digest,32,text_hex);
         }
         if (count<96) {
             size_t k=0; for (; k<sizeof names[0]-1 && m.name[k]; ++k) { char c=m.name[k]; names[count][k]=(c>=0x20&&c<0x7f&&c!='"'&&c!='\\')?c:'?'; }
@@ -163,8 +239,13 @@ int lce_client_report_build(char *out,size_t cap,const char *device,uintptr_t ga
     }
     (void)read_app_version(game);
     static char hw[160]; read_hw(hw,sizeof hw);
-    return lce_client_report_format_hw(out,cap,device,LCE_PLUGIN_BUILD,game,text_hex,hw,mods,count,debug_used,
-                                       lce_client_report_key,sizeof lce_client_report_key);
+    /* ik: this plugin accepts a per-install key (always announced). */
+    const int have_install=lce_client_report_has_install_key();
+    uint8_t install[32]; if (have_install) memcpy(install,install_key_value,32);
+    int ok=lce_client_report_format_ik(out,cap,device,LCE_PLUGIN_BUILD,game,text_hex,hw,mods,count,debug_used,
+                                       lce_client_report_key,sizeof lce_client_report_key,1,have_install?install:NULL);
+    { volatile uint8_t *p=install; for (size_t i=0;i<32;++i) p[i]=0; }
+    return ok;
 }
 #endif
 

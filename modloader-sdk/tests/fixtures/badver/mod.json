@@ -1,0 +1,3 @@
+{"format":1,"id":"badver","name":"Bad Version","version":"1.0","dependencies":{"rubymod":"9.0"},
+ "textures":{"badver:i_y":{"file":"../../../examples/java-rubymod/src/assets/rubymod/textures/item/ruby.png"}},
+ "items":[{"key":"badver:y","name":"Y","texture":"badver:i_y"}]}

@@ -1,0 +1,95 @@
+{
+ "format": 1,
+ "id": "blockstates",
+ "name": "Block states (API 1.7)",
+ "version": "1.0.1",
+ "author": "tests",
+ "description": "API 1.7: a 3-variant block with per-variant names and textures, a bottom slab box, a glass pane-like box and a no-collision plant.",
+ "textures": {
+  "blockstates:marble": {
+   "file": "textures/marble.png",
+   "atlas": "terrain"
+  },
+  "blockstates:marble_black": {
+   "file": "textures/marble_black.png",
+   "atlas": "terrain"
+  },
+  "blockstates:marble_grey": {
+   "file": "textures/marble_grey.png",
+   "atlas": "terrain"
+  },
+  "blockstates:marble_slab": {
+   "file": "textures/marble_slab.png",
+   "atlas": "terrain"
+  },
+  "blockstates:glass_wall": {
+   "file": "textures/glass_wall.png",
+   "atlas": "terrain"
+  },
+  "blockstates:weed": {
+   "file": "textures/weed.png",
+   "atlas": "terrain"
+  }
+ },
+ "blocks": [
+  {
+   "key": "blockstates:marble",
+   "name": "Marble",
+   "texture": "blockstates:marble",
+   "hardness": 1.5,
+   "variants": [
+    {},
+    {
+     "name": "Black Marble",
+     "texture": {
+      "top": "blockstates:marble_black",
+      "bottom": "blockstates:marble_black",
+      "side": "blockstates:marble"
+     }
+    },
+    {
+     "name": "Grey Marble",
+     "texture": "blockstates:marble_grey"
+    }
+   ]
+  },
+  {
+   "key": "blockstates:marble_slab",
+   "name": "Marble Slab",
+   "texture": "blockstates:marble_slab",
+   "box": [
+    0,
+    0,
+    0,
+    16,
+    8,
+    16
+   ]
+  },
+  {
+   "key": "blockstates:pane",
+   "name": "Glass Wall",
+   "texture": "blockstates:glass_wall",
+   "material": "glass",
+   "sound": "glass",
+   "transparent": true,
+   "box": [
+    0,
+    0,
+    7,
+    16,
+    16,
+    9
+   ]
+  },
+  {
+   "key": "blockstates:weed",
+   "name": "Weed",
+   "texture": "blockstates:weed",
+   "material": "plant",
+   "sound": "grass",
+   "no_collision": true,
+   "hardness": 0
+  }
+ ]
+}

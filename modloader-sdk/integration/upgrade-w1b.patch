@@ -1,0 +1,81 @@
+diff -ruN l/ps4-metadata-snapshot/crashlog-build/build-crashlog.sh n/ps4-metadata-snapshot/crashlog-build/build-crashlog.sh
+--- ps4-metadata-snapshot/crashlog-build/build-crashlog.sh	2026-11-18 13:38:14.246209124 +0000
++++ ps4-metadata-snapshot/crashlog-build/build-crashlog.sh	2026-11-18 13:38:14.246367114 +0000
+@@ -109,12 +109,13 @@
+ #    The prebuilt objects are kept once as *.pre-sdk.keep (rollback: copy them back).
+ lcesdk=/home/codey/minecraft-lce-work/modloader-sdk
+ s195="$root/loader/super_content_steel_nbt_save_195"
+-for o in super trace tools_runtime content_process content_craft_hook craft_provider/integration_provider_capture craft_provider/modded-crafting-candidate; do
++for o in super trace tools_runtime process_resource content_process content_craft_hook craft_provider/integration_provider_capture craft_provider/modded-crafting-candidate; do
+  [ -f "$crash/build/$o.o.pre-sdk.keep" ] || cp "$crash/build/$o.o" "$crash/build/$o.o.pre-sdk.keep"
+ done
+ clang++ "${flags[@]}" "${cxx[@]}" -c "$s195/super.cpp" -o "$crash/build/super.o"
+ clang++ "${flags[@]}" "${cxx[@]}" -I"$root/loader/steel_startup_trace_195" -DSTEEL_TRACE_COMPONENT -c "$s195/registry_trace.cpp" -o "$crash/build/trace.o"
+ clang++ "${flags[@]}" "${cxx[@]}" -I"$root/compatibility/ruby/vendor/lua-5.4.8/src" -c "$s195/tools_runtime.cpp" -o "$crash/build/tools_runtime.o"
++clang++ "${flags[@]}" "${cxx[@]}" -I"$root/compatibility/ruby/vendor/lua-5.4.8/src" -Dsteel195_resource_grow=mc195_items_resource_grow -c "$s195/resource.cpp" -o "$crash/build/process_resource.o"
+ clang++ "${flags[@]}" "${cxx[@]}" -c "$s195/content_process.cpp" -o "$crash/build/content_process.o"
+ clang++ "${flags[@]}" "${cxx[@]}" -c "$root/loader/steel_process_content_195/craft_hook.cpp" -o "$crash/build/content_craft_hook.o"
+ clang++ "${flags[@]}" "${cxx[@]}" -I/home/codey/minecraft-ps4-research/loader/modded_crafting_tabs_195/work-r20 -c "$root/loader/additive_recipes_195/craft_ui_capture.cpp" -o "$crash/build/craft_provider/integration_provider_capture.o"
+diff -ruN l/r72-session-candidate/loader/super_content_steel_nbt_save_195/resource.cpp n/r72-session-candidate/loader/super_content_steel_nbt_save_195/resource.cpp
+--- r72-session-candidate/loader/super_content_steel_nbt_save_195/resource.cpp	2026-11-18 13:38:14.246852421 +0000
++++ r72-session-candidate/loader/super_content_steel_nbt_save_195/resource.cpp	2026-11-18 13:38:14.246964165 +0000
+@@ -50,13 +50,23 @@
+   (prot&required)==required && (uintptr_t)lo<=addr && (uintptr_t)hi>=addr+n;
+ }
+ static int read_checked(void *,uintptr_t addr,void *out,size_t n){if(!out || !mapping(addr,n,1))return 0;memcpy(out,(void *)addr,n);return 1;}
++/* LCE mod loader SDK, W1b: SDK-only sessions have no Steel owner; the item atlas
++ * then belongs to the tools-runtime catalog (SDK items only), like the Lucky-alone path. */
++extern "C" int steel195_tools_runtime_sdk_only(void);
++extern "C" uintptr_t steel195_tools_runtime_sdk_base(void);
++static int sdk_alone(){return !mc195_lucky_alone()&&steel195_tools_runtime_sdk_only();}
+ static const lce195_item_catalog *item_catalog(){
+  return mc195_lucky_alone()?mc195_lucky_only_atlas_catalog(mc195_lucky_only_owner()):steel195_tools_runtime_catalog();
+ }
+ static int item_identity(){
++ if(sdk_alone())return steel195_tools_runtime_identity();
+  return mc195_lucky_alone()?mc195_lucky_only_identity(mc195_lucky_only_owner()):steel195_owner_status()==3 && steel195_tools_runtime_identity();
+ }
+ static uintptr_t resource_identity(uintptr_t a,uintptr_t b){
++ if(sdk_alone()){
++  const auto *c=item_catalog();
++  return c&&c->count&&a==c->entries[0].item&&b==c->entries[c->count>1?1:0].item?steel195_tools_runtime_sdk_base():0;
++ }
+  if(!mc195_lucky_alone())return steel195_content_resource_identity(a,b);
+  const auto *owner=mc195_lucky_only_owner();const auto *c=item_catalog();
+  return owner&&c&&c->count&&a==c->entries[0].item&&b==c->entries[c->count>1?1:0].item?owner->publisher.base:0;
+@@ -67,7 +77,7 @@
+ static int source_valid(void *,uintptr_t src){return held(nullptr) && mapping(src,0x60,1);}
+ static int begin_resource(){
+  int32_t tid=scePthreadGetthreadid();if(tid<=0)return 0;
+- if(mc195_lucky_alone()){
++ if(mc195_lucky_alone()||sdk_alone()){
+   const auto *c=item_catalog();if(!c||!c->count)return 0;
+   ingot=c->entries[0].item;pickaxe=c->entries[c->count>1?1:0].item;
+  }else if(!steel195_owner_items(&ingot,&pickaxe))return 0;
+diff -ruN l/r72-session-candidate/loader/super_content_steel_nbt_save_195/tools_runtime.cpp n/r72-session-candidate/loader/super_content_steel_nbt_save_195/tools_runtime.cpp
+--- r72-session-candidate/loader/super_content_steel_nbt_save_195/tools_runtime.cpp	2026-11-18 13:38:14.247254413 +0000
++++ r72-session-candidate/loader/super_content_steel_nbt_save_195/tools_runtime.cpp	2026-11-18 13:38:14.247316070 +0000
+@@ -62,8 +62,11 @@
+  return prepared_result;
+ }
+ static int reserved(void *,const char *provider,uint32_t id,const char *key){
+- if(!provider||!key||steel195_owner_status()!=3)return 0;
++ /* SDK-only (W1b): the Steel owner is never prepared, so the reservation of
++  * non-Steel providers must not depend on it (registry=4 on the first console run). */
++ if(!provider||!key||!owner_ready())return 0;
+  if(strcmp(provider,"steel"))return mc195_custom_items_reserved(provider,id,key);
++ if(sdk_only)return 0;
+  if(id==2268)return !strcmp(key,"steelMod:steelIngot");
+  if(id==2269)return !strcmp(key,"steelMod:steelPickaxe");
+  return steel195_extra_reserved(nullptr,provider,id,key);
+@@ -111,6 +114,10 @@
+  if(lce195_names_bind(&names,specs,4)!=1||!lce195_items_window_leave(&window))return fail_registration(4,-1);
+  __atomic_store_n(&registration,2u,__ATOMIC_RELEASE);return 1;
+ }
++/* W1b: the attested base once the SDK-only registration published (resource.cpp identity). */
++extern "C" uintptr_t steel195_tools_runtime_sdk_base(void){
++ return sdk_only&&__atomic_load_n(&registration,__ATOMIC_ACQUIRE)==2&&publisher.state==2?publisher.base:0;
++}
+ extern "C" const lce195_item_catalog *steel195_tools_runtime_catalog(void){
+  return __atomic_load_n(&registration,__ATOMIC_ACQUIRE)==2?&catalog:nullptr;
+ }

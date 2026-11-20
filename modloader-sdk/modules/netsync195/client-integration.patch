@@ -1,0 +1,64 @@
+--- a/ps4-transport/native_bridge.c
++++ b/ps4-transport/native_bridge.c
+@@ -3,9 +3,13 @@
+ /* Optional plugin hook (weak: absent in the host tests). Returns nonzero when it
+    consumed a server->plugin control frame that must not reach the retail client. */
+ extern int lce_remote_inbound_frame(const uint8_t *,size_t) __attribute__((weak));
++/* netsync195 (weak): consumes [250]["LCE|ModIds"] frames. Runs here, with the
++   bridge lock held, so it only posts; the HELLO is sent from lce_netsync_pump. */
++extern int lce_netsync_inbound_frame(const uint8_t *,size_t) __attribute__((weak));
+ static int receive_frame(void *context,const uint8_t *data,size_t n) {
+     lce_native_bridge *b=context;
+     if (!b->attached || !b->socket || !n || n>UINT32_MAX) return 0;
++    if (lce_netsync_inbound_frame && lce_netsync_inbound_frame(data,n)) return 1;
+     if (lce_remote_inbound_frame && lce_remote_inbound_frame(data,n)) return 1;
+     b->ops.push(b->socket,data,(uint32_t)n,1);
+     return 1;
+--- a/ps4-transport/session_runtime.cpp
++++ b/ps4-transport/session_runtime.cpp
+@@ -7,6 +7,13 @@
+ // standard placement allocation primitive locally for process-lifetime Install.
+ inline void *operator new(size_t,void *storage) noexcept { return storage; }
+ 
++/* netsync195 (weak): sends the LCE|ModIds HELLO once the server asked for it.
++   Called on the UI/game thread, outside the bridge lock. */
++extern "C" void lce_netsync_pump(int active,int (*send)(void *,const uint8_t *,size_t),void *ctx) __attribute__((weak));
++static int netsync_send(void *ctx,const uint8_t *packet,size_t size) {
++    return static_cast<lce_session_coordinator::Coordinator *>(ctx)->send_game_packet(packet,size) ? 1 : 0;
++}
++
+ namespace lce_session_runtime {
+ 
+ bool Runtime::reject(Error e) { error_=e; return false; }
+@@ -108,6 +115,8 @@
+ bool Runtime::run_ui_task(bool owned_game_tick) {
+     if (!owned_game_tick) return false;
+     const bool ran=scheduler_.run_ui_task();
++    if (lce_netsync_pump)
++        lce_netsync_pump(coordinator_.phase()==lce_session_coordinator::Phase::Active,netsync_send,&coordinator_);
+     if (coordinator_.phase()==lce_session_coordinator::Phase::CleanupPending)
+         (void)coordinator_.retry_cleanup();
+     return ran;
+--- a/modloader-sdk/integration/sdk_boot.cpp
++++ b/modloader-sdk/integration/sdk_boot.cpp
+@@ -61,6 +61,11 @@
+     return p.found;
+ }
+ 
++/* netsync195 (weak): snapshot the ledger + committed plan for the LCE|ModIds
++   handshake. "published" = boot state 2 (armed: the backend will register the
++   items when the game builds Item::items). */
++extern "C" int lce_netsync_configure_from_loader(const lce_loader *, int, void (*)(const char *)) __attribute__((weak));
++
+ extern "C" int lce_sdk_boot(uintptr_t attested_base, void (*log)(const char *)) {
+     unsigned zero = 0;
+     if (!attested_base || !__atomic_compare_exchange_n(&g_boot_state, &zero, 1u, false, __ATOMIC_ACQ_REL, __ATOMIC_ACQUIRE)) return 0;
+@@ -103,6 +108,8 @@
+         live += r->state == LCE_MOD_LIVE;
+     }
+     unsigned final_state = st != LCE_OK ? (lce195_backend_status(&g_backend) == LCE195_SDK_UNCERTAIN ? 5u : 4u) : live ? 2u : 3u;
++    if (lce_netsync_configure_from_loader && !lce_netsync_configure_from_loader(g_loader, final_state == 2u, g_log))
++        log_cb(nullptr, "LCE_SDK netsync: ledger not representable; the server will see an empty mod ID table");
+     __atomic_store_n(&g_boot_state, final_state, __ATOMIC_RELEASE);
+     return final_state == 2u ? 1 : final_state == 5u ? -1 : 0;
+ }

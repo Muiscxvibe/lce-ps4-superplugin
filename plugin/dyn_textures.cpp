@@ -17,9 +17,16 @@
 #include "loader/additive_skin_owner_195/gre_component.h"
 #include "loader/java_texture_invictus_runtime_195/dynamic.hpp"
 #include "tex_registry.h"
+#include "tex_choice.h"
 extern "C" {
 uint32_t mc195_debug_owner_thread(void);
+unsigned mc195_java_attempt_status(unsigned);
+unsigned mc195_barebones_gre_status(void);
+unsigned mc195_bb2016_gre_status(void);
+unsigned mc195_pixel2017_gre_status(void);
 void mc195_remote_log(const char *);
+uint64_t lce_perf_now_us(void);
+void lce_perf_account(unsigned, uint64_t);
 }
 
 namespace {
@@ -37,8 +44,17 @@ unsigned slots[LCE_TEX_REGISTRY_MAX];
 unsigned result[LCE_TEX_REGISTRY_MAX];   // 0 pending, 1 running, 2 published, 3 rejected, 4 uncertain
 unsigned count;
 int scanned, bound;
+unsigned scan_done;
 uintptr_t base;
 
+// A pack the user turned off in the Mods menu (<root>/<slug>/disabled, see
+// mods_tabs_lce.cpp) is not registered at this launch.
+bool user_disabled(const char *dir, const char *name) {
+    char p[160];
+    if (strcmp(dir, kRoot) || snprintf(p, sizeof p, "%s/%s/disabled", kRoot, name) >= (int)sizeof p) return false;
+    OrbisKernelStat st;
+    return sceKernelStat(p, &st) >= 0;
+}
 int list_dirs(void *, const char *dir, void (*emit)(void *, const char *), void *ec) {
     int fd = sceKernelOpen(dir, 0x20000 /* O_DIRECTORY */, 0);
     if (fd < 0) return 0;
@@ -53,7 +69,7 @@ int list_dirs(void *, const char *dir, void (*emit)(void *, const char *), void 
             if (type == 4 /* DT_DIR */ && namlen && namlen < 49 && 8 + namlen <= reclen) {
                 char name[49];
                 memcpy(name, buf + off + 8, namlen); name[namlen] = 0;
-                if (name[0] != '.') emit(ec, name);
+                if (name[0] != '.' && !user_disabled(dir, name)) emit(ec, name);
             }
             off += reclen;
         }
@@ -84,19 +100,20 @@ void scan_once() {
     snprintf(line, sizeof line, "Downloaded textures: %u valid, %u invalid, %u reserved, %u duplicate, %u over limit\n", count,
              (unsigned)st.invalid, (unsigned)st.reserved, (unsigned)st.duplicate, (unsigned)st.full);
     if (count || st.invalid || st.reserved || st.duplicate || st.full) mc195_remote_log(line);
+    __atomic_store_n(&scan_done, 1u, __ATOMIC_RELEASE);
 }
 
 uint64_t tid() { int32_t n = scePthreadGetthreadid(); return n > 0 ? (uint64_t)n : 0; }
 
 // One pack per call, on the validated title tick with the content scope held.
 // 0 = more to do next tick, 1 = all done, -1 = uncertain native state (poisons the fanout).
-int operation(void *) {
+int operation_body() {
     if (!mc195_gre_scope_held() || tid() != mc195_debug_owner_thread()) return 0;
     for (unsigned i = 0; i < count; ++i) {
         if (result[i]) continue;
-        result[i] = 1;
+        __atomic_store_n(&result[i], 1u, __ATOMIC_RELEASE);
         int r = slots[i] == kNoSlot ? 0 : mc195_java_attempt_dyn(slots[i], base, &packs[i]);
-        result[i] = r > 0 ? 2u : r < 0 ? 4u : 3u;
+        __atomic_store_n(&result[i], r > 0 ? 2u : r < 0 ? 4u : 3u, __ATOMIC_RELEASE);
         char line[140];
         snprintf(line, sizeof line, "Downloaded textures: %s (id %u) %s\n", entries[i].slug, (unsigned)entries[i].dlc_id,
                  r > 0 ? "registered" : r < 0 ? "UNCERTAIN" : "refused");
@@ -108,6 +125,8 @@ int operation(void *) {
     return 1;
 }
 
+// Title-tick work on the UI thread, timed for BOOT_SUMMARY (perf_boot.cpp).
+int operation(void *) { uint64_t t = lce_perf_now_us(); int r = operation_body(); lce_perf_account(4u /* LCE_PERF_SPAN_DYN_TEXTURES */, t); return r; }
 uintptr_t game_base() {
     OrbisKernelModule handles[256]; size_t total = 0;
     if (sceKernelGetModuleList(handles, 256, &total) != 0) return 0;
@@ -148,9 +167,9 @@ extern "C" __attribute__((visibility("hidden"))) int mc195_dyn_textures_bind() {
     if (!base) return 0;
     for (unsigned i = 0; i < count; ++i) {
         slots[i] = kNoSlot;
-        if (!fill(i)) { result[i] = 3; continue; }
+        if (!fill(i)) { __atomic_store_n(&result[i], 3u, __ATOMIC_RELEASE); continue; }
         slots[i] = mc195_java_dyn_slot(entries[i].dlc_id);
-        if (slots[i] == kNoSlot) { result[i] = 3; mc195_remote_log("Downloaded textures: no free slot, pack skipped\n"); }
+        if (slots[i] == kNoSlot) { __atomic_store_n(&result[i], 3u, __ATOMIC_RELEASE); mc195_remote_log("Downloaded textures: no free slot, pack skipped\n"); }
     }
     if (!mc195_gre_set_title_operation(operation, &count)) { mc195_remote_log("Downloaded textures: title operation unavailable\n"); return 0; }
     mc195_remote_log("Downloaded textures: registration scheduled\n");
@@ -167,4 +186,53 @@ extern "C" __attribute__((visibility("hidden"))) int mc195_dyn_textures_in_use(c
             return (bound && r != 3) ? 1 : 0;   // pending, running, published or uncertain
         }
     return 0;
+}
+
+// Mods menu (mods_tabs_lce.cpp): this session's state of the downloaded pack in
+// folder `slug`. 0 not registered this launch, 1 pending, 2 registered,
+// 3 refused, 4 uncertain.
+extern "C" __attribute__((visibility("hidden"))) unsigned mc195_dyn_textures_slug_state(const char *slug) {
+    if (!slug || !bound) return 0;
+    for (unsigned i = 0; i < count; ++i)
+        if (!strcmp(entries[i].slug, slug)) { unsigned r = __atomic_load_n(&result[i], __ATOMIC_ACQUIRE); return r <= 1 ? 1u : r; }
+    return 0;
+}
+
+// Called on the title UI thread after startup scan. Only offer published packs.
+extern "C" __attribute__((visibility("hidden"))) size_t mc195_dyn_texture_choices(lce_tex_choice *out, size_t cap) {
+    if (!out || !cap) return 0;
+    size_t n = 0;
+    const unsigned available = __atomic_load_n(&scan_done, __ATOMIC_ACQUIRE) ? count : 0;
+    for (unsigned i = 0; i < available && n < cap; ++i) {
+        if (__atomic_load_n(&result[i], __ATOMIC_ACQUIRE) != 2) continue;
+        lce_tex_choice &c = out[n]; memset(&c, 0, sizeof c);
+        if (snprintf(c.key, sizeof c.key, "dl:%s", entries[i].slug) >= (int)sizeof c.key) continue;
+        snprintf(c.name, sizeof c.name, "%s", entries[i].name);
+        c.id = entries[i].dlc_id; ++n;
+    }
+    // Other built-in packs are selectable only once their guarded publication succeeds.
+    struct builtin { uint32_t id; const char *key; const char *name; unsigned (*status)(); };
+    static const builtin builtins[] = {
+        {2001, "bare-bones", "Bare Bones", mc195_barebones_gre_status},
+        {2016, "bare-bones-compat", "Bare Bones Compat", mc195_bb2016_gre_status},
+        {2017, "pixel-perfection-extended", "Pixel Perfection Extended", mc195_pixel2017_gre_status},
+    };
+    for (const auto &b : builtins) {
+        if (n >= cap) break;
+        if (b.status() != 2) continue;
+        lce_tex_choice &c=out[n++]; memset(&c,0,sizeof c);
+        snprintf(c.key,sizeof c.key,"%s",b.key); snprintf(c.name,sizeof c.name,"%s",b.name); c.id=b.id;
+    }
+    // The six built-in Java ports use the same slots as downloaded packs.
+    static const uint32_t ids[] = {2011,2012,2013,2014,2015,2018};
+    static const char *const keys[] = {"faithful","pixel-perfection","before","love-and-tolerance","dandelion","invictus"};
+    static const char *const names[] = {"Faithful","Pixel Perfection CE","Before","Love & Tolerance","Dandelion","Invictus"};
+    for (unsigned i=0; i<6 && n<cap; ++i) {
+        if (mc195_java_attempt_status(i)!=2) continue;
+        bool duplicate=false;for(size_t j=0;j<n;++j)if(out[j].id==ids[i])duplicate=true;
+        if(duplicate)continue;
+        lce_tex_choice &c=out[n++];memset(&c,0,sizeof c);
+        snprintf(c.key,sizeof c.key,"%s",keys[i]);snprintf(c.name,sizeof c.name,"%s",names[i]);c.id=ids[i];
+    }
+    return n;
 }

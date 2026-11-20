@@ -17,6 +17,7 @@ extern "C" uintptr_t mc195_super_expected_base();
 #include "monitor_mailbox.hpp"
 #if defined(MC_LEGACY195) && defined(MC_SUPER195)
 #include "session_runtime.hpp"
+#include "mod_gate.hpp"
 #include "native_keyboard.hpp"
 #include "account_flow.hpp"
 #include "client_report.h"
@@ -25,6 +26,9 @@ extern "C" uintptr_t mc195_super_expected_base();
 #include "account_config.hpp"
 #include "selection_lookup.hpp"
 #include "login_gui.hpp"
+#include "tex_choice.h"
+#include <orbis/_types/errors.h>
+#include "install_key_store.h"
 #if defined(MC_METADATA_SNAPSHOT)
 #include "native_metadata_snapshot.h"
 #include "/home/codey/minecraft-lce-work/ps4-metadata-snapshot/item-audit-build/native_metadata_snapshot_extended.h"
@@ -37,13 +41,19 @@ extern "C" uintptr_t mc195_super_expected_base();
 extern "C" void mc195_tabs_sessions_tick(void *,uintptr_t,uintptr_t);
 #include "/home/codey/minecraft-lce-work/r72-session-candidate/loader/super_content_steel_nbt_save_195/nbt_integration.hpp"
 extern "C" void mc195_debug_pad_master_enable(int);
-namespace mc195_tabs { void invalidate_all(); }
+namespace mc195_tabs { void invalidate_all(); bool tick(void *,uintptr_t); }
+extern "C" bool lce_chat_render_wanted(void);
 #endif
 #endif
 #include "/home/codey/minecraft-lce-work/r72-session-candidate/native-debug-plugin/cooperative-upgrade/debug-runtime/native-input/native_pad.hpp"
 #include "/home/codey/minecraft-lce-work/r72-session-candidate/native-debug-plugin/cooperative-upgrade/weather-bridge/runtime/weather_runtime.h"
 #define EXPORT extern "C" __attribute__((visibility("default")))
 #define LOG "/data/minecraft-lce-custom-dialog.log"
+#if defined(LCE_RELEASE)
+EXPORT const char *g_pluginName="LCE Server session plugin";
+EXPORT const char *g_pluginDesc="Minecraft PS4 Edition 1.95: LCE Server sign-in, join and content";
+EXPORT const char *g_pluginAuth="LCE Server";
+#else
 #if defined(MC_LEGACY195)
 EXPORT const char *g_pluginName="Minecraft 1.95 experimental debug UI";
 #else
@@ -51,12 +61,20 @@ EXPORT const char *g_pluginName="Minecraft LCE UI seam observer";
 #endif
 EXPORT const char *g_pluginDesc="Observe a candidate UI update callsite";
 EXPORT const char *g_pluginAuth="Codex";
+#endif
 EXPORT uint32_t g_pluginVersion=1;
 static unsigned count, first_tid, other_tid, resident; static OrbisPthread worker;
 static uintptr_t game_base;
 static void logline(const char *s);
 extern "C" void lce_vtable_trace_poll();
 extern "C" void lce_plugin_update_tick();
+extern "C" bool lce_plugin_update_boot();
+extern "C" void lce_plugin_update_healthy();
+// selfsetup.cpp: first-run folders, LAN discovery of lce-servers.conf, account.conf/CA
+extern "C" void lce_selfsetup_boot();
+extern "C" bool lce_selfsetup_ready();
+extern "C" bool lce_selfsetup_take_reload();
+extern "C" void lce_selfsetup_list_opened();
 static void notify_user(const char *message);
 #if defined(MC_LEGACY195) && defined(MC_SUPER195)
 inline void *operator new(size_t,void *storage) noexcept { return storage; }
@@ -165,11 +183,14 @@ static bool account_schedule(void *,void (*task)(void *,uint64_t),void *ctx,uint
 // Server-granted debug menu permission for the current server session.
 static unsigned server_debug_allowed=0;
 static char account_client_report[1537];
+extern "C" int lce_console_ids_restore_failed(void);
 static bool account_authenticate(void *,const char *username,const char *password,bool use_token,bool remember,lce_auth_result *result) {
  // Anticheat: attach the signed client integrity report (runs on the worker thread).
  if(lce_client_report_build(account_client_report,sizeof account_client_report,account_device,game_base,0))
   (void)lce_auth_set_client_report(account_client_report);
  else (void)lce_auth_set_client_report(nullptr);
+ // Never talk to the network while GoldHEN left this process jailbroken.
+ if(lce_console_ids_restore_failed()){lce_auth_set_client_report(nullptr);logline("Sign-in refused: console credentials were not restored.\n");return false;}
  return lce_orbis_auth_request(&account_network,account_url,use_token?LCE_AUTH_RESUME:LCE_AUTH_LOGIN_OR_REGISTER,
                                username,password,account_device,remember?1:0,result)!=0;
 }
@@ -197,6 +218,20 @@ static void account_bootstrap(void *,uint64_t) {
  if(ok) {step=3;ok=account_read_file("/data/lce-account-ca.pem",account_pem,sizeof account_pem-1,&pem_size);}
  if(ok) {step=4;ok=lce_orbis_auth_init(&account_network,game_base,account_pem,pem_size);}
  if(ok) {memcpy(account_url,config.url,sizeof account_url);memcpy(account_device,config.device,sizeof account_device);}
+ if(ok) {
+  // Per-server pseudonymous console ids (release builds) and this install's
+  // report key, if the server issued one earlier (see install_key_store.h).
+  lce_client_report_set_hw_salt(account_url);
+  lce_install_key_record rec{};uint8_t key[32];
+  int fd=sceKernelOpen(LCE_INSTALL_KEY_PATH,O_RDONLY|O_NOFOLLOW,0);
+  if(fd>=0) {
+   size_t got=sceKernelRead(fd,&rec,sizeof rec);char extra;size_t tail=sceKernelRead(fd,&extra,1);sceKernelClose(fd);
+   if(got==sizeof rec && tail==0 && lce_install_key_record_check(&rec,sizeof rec,account_url,account_device,key))
+    lce_client_report_set_install_key(key);
+   lce_auth_wipe(key,sizeof key);
+  }
+  lce_auth_wipe(&rec,sizeof rec);
+ }
  lce_auth_wipe(&config,sizeof config);lce_auth_wipe(config_file,sizeof config_file);
  __atomic_store_n(&account_bootstrap_state,ok?2u:3u,__ATOMIC_RELEASE);
  if(ok)logline("Account HTTPS context initialized.\n");
@@ -275,8 +310,29 @@ static bool account_save_token(unsigned index,const char *name,const char *token
  }
  lce_auth_wipe(&value,sizeof value);return ok;
 }
+// Store a newly issued per-install report key (atomic replace, owner-only).
+static void account_store_install_key(const char *key_hex) {
+ lce_install_key_record rec{};uint8_t key[32];
+ if(!lce_install_key_record_make(&rec,account_url,account_device,key_hex) ||
+    !lce_install_key_record_check(&rec,sizeof rec,account_url,account_device,key)) {lce_auth_wipe(&rec,sizeof rec);return;}
+ static const char temp[]=LCE_INSTALL_KEY_PATH ".tmp";
+ (void)sceKernelUnlink(temp);
+ int fd=sceKernelOpen(temp,O_WRONLY|O_CREAT|O_EXCL|O_NOFOLLOW,0600);bool ok=fd>=0;
+ if(ok) {size_t written=sceKernelWrite(fd,&rec,sizeof rec);ok=written==sizeof rec && sceKernelFsync(fd)>=0;
+  if(sceKernelClose(fd)<0)ok=false;
+  if(ok)ok=sceKernelRename(temp,LCE_INSTALL_KEY_PATH)>=0;
+  if(!ok)(void)sceKernelUnlink(temp);
+ }
+ // Never keep an older key that the server no longer has (a stale key is refused).
+ if(!ok)(void)sceKernelUnlink(LCE_INSTALL_KEY_PATH);
+ // Use the key for the next report even if it could not be saved (this session only).
+ lce_client_report_set_install_key(key);
+ lce_auth_wipe(key,sizeof key);lce_auth_wipe(&rec,sizeof rec);
+ logline(ok?"Server issued this console a report key.\n":"Server report key could not be saved.\n");
+}
 static bool account_join_begin(void *,const lce_servers::Server &server,int pad,const lce_auth_result &result) {
  __atomic_store_n(&server_debug_allowed,result.debug_allowed?1u:0u,__ATOMIC_RELEASE);
+ if(result.install_key[0])account_store_install_key(result.install_key);
  if(account_pending_save_name[0] && !account_save_token(account_pending_save_index,account_pending_save_name,result.token))
   notify_user("Could not save login details; please enter them next time.");
  lce_auth_wipe(account_pending_save_name,sizeof account_pending_save_name);
@@ -306,9 +362,14 @@ extern "C" void lce_remote_pump(void);
 // count/damage transactions and the held-item NBT viewer use "/lce-nbt" with server read-back.
 static void forward_remote_debug_actions() {
  static bool was_active;
- const bool active=session_runtime && session_runtime->configured() &&
-  session_runtime->coordinator().phase()==lce_session_coordinator::Phase::Active &&
-  __atomic_load_n(&server_debug_allowed,__ATOMIC_ACQUIRE);
+ // Arm the mod gate whenever this console is joined to an LCE server (phase
+ // Active), independent of debug permission: on a server the bundled mod GUI
+ // and content are hidden/inactive; off it (local worlds) they behave as
+ // before. See mod_gate.hpp.
+ const bool on_server=session_runtime && session_runtime->configured() &&
+  session_runtime->coordinator().phase()==lce_session_coordinator::Phase::Active;
+ lce_mod_gate_set_on_server(on_server?1:0);
+ const bool active=on_server && __atomic_load_n(&server_debug_allowed,__ATOMIC_ACQUIRE);
  if(!active && !was_active)return;
  was_active=active;
  lce_remote_pump();
@@ -322,6 +383,12 @@ extern "C" __attribute__((visibility("hidden"))) bool mc195_remote_actions_activ
  if(!session_runtime || !session_runtime->configured())return false;
  return session_runtime->coordinator().phase()==lce_session_coordinator::Phase::Active &&
         __atomic_load_n(&server_debug_allowed,__ATOMIC_ACQUIRE)!=0;
+}
+// Fail closed throughout connection, transition and retained failure phases.
+extern "C" __attribute__((visibility("hidden"))) bool mc195_nbt_offline_ready() {
+ if(!session_runtime || !session_runtime->configured())return true;
+ const auto phase=session_runtime->coordinator().phase();
+ return phase==lce_session_coordinator::Phase::Idle || phase==lce_session_coordinator::Phase::Unconfigured;
 }
 extern "C" __attribute__((visibility("hidden"))) bool mc195_remote_send_action2(unsigned action,uint32_t a,uint32_t b) {
  if(!mc195_remote_actions_active())return false;
@@ -356,7 +423,81 @@ static bool debug_menu_permitted() {
      phase==lce_session_coordinator::Phase::AwaitingGameThread;
  return !on_server || __atomic_load_n(&server_debug_allowed,__ATOMIC_ACQUIRE)!=0;
 }
-static bool account_gui_show(void *,bool has_name,bool has_password,bool remember,bool saved_token) {
+// Per-server choice is local to this console. The transport worker reads only
+// this atomically published resolved ID; it never touches the UI or filesystem.
+extern "C" size_t mc195_dyn_texture_choices(lce_tex_choice *, size_t);
+static lce_tex_choice account_texture_list[LCE_TEX_CHOICE_MAX];
+static size_t account_texture_count;
+static char account_texture_key[LCE_TEX_CHOICE_KEY_MAX];
+static uint64_t account_texture_active; // bit 32 valid, low 32 retail pack ID
+static char16_t account_texture_labels[native_menu::capacity][96];
+static const char account_texture_path[] = "/data/lce-texture-choices.conf";
+static const char account_texture_temp[] = "/data/lce-texture-choices.conf.tmp";
+extern "C" void lce_tex_prelogin_clear(void) { __atomic_store_n(&account_texture_active,0ull,__ATOMIC_RELEASE); }
+extern "C" int lce_tex_prelogin_choose(uint32_t, uint32_t *id) {
+ uint64_t v=__atomic_load_n(&account_texture_active,__ATOMIC_ACQUIRE);
+ if (!(v>>32) || !id) return 0;
+ *id=(uint32_t)v;return 1;
+}
+/* 0: absent; positive: full file; -1: error or malformed empty file. */
+static int account_texture_read(char *buf,size_t cap) {
+ int fd=sceKernelOpen(account_texture_path,O_RDONLY|O_NOFOLLOW,0);
+ if(fd<0)return (uint32_t)fd==ORBIS_KERNEL_ERROR_ENOENT?0:-1;
+ size_t used=0;bool ok=true;
+ while(used<cap) {long r=(long)sceKernelRead(fd,buf+used,cap-used);if(r<0){ok=false;break;}if(!r)break;used+=(size_t)r;}
+ if(used==cap){char extra;long r=(long)sceKernelRead(fd,&extra,1);if(r!=0)ok=false;}
+ if(sceKernelClose(fd)<0)ok=false;
+ return ok && used ? (int)used : -1;
+}
+static void account_texture_prepare(unsigned index) {
+ account_texture_count=0;account_texture_key[0]=0;
+ __atomic_store_n(&account_texture_active,0u,__ATOMIC_RELEASE);
+ if(index>=session_servers.count)return;
+ lce_tex_choice &def=account_texture_list[account_texture_count++];memset(&def,0,sizeof def);
+ snprintf(def.key,sizeof def.key,"default");snprintf(def.name,sizeof def.name,"Default");def.id=0;
+ account_texture_count+=mc195_dyn_texture_choices(account_texture_list+account_texture_count,LCE_TEX_CHOICE_MAX-account_texture_count);
+ static char text[LCE_TEX_CHOICE_CONF_MAX];int n=account_texture_read(text,sizeof text);
+ const auto &server=session_servers.entries[index];
+ if(n>0) (void)lce_tex_choice_conf_get(text,(size_t)n,server.host,server.port,account_texture_key,sizeof account_texture_key);
+}
+static void account_texture_cycle(void *) {
+ if(account_gui_index>=session_servers.count)return;
+ char next[LCE_TEX_CHOICE_KEY_MAX];lce_tex_choice_next(account_texture_list,account_texture_count,account_texture_key,next,sizeof next);
+ static char old[LCE_TEX_CHOICE_CONF_MAX],out[LCE_TEX_CHOICE_CONF_MAX+1];
+ int len=account_texture_read(old,sizeof old);const auto &server=session_servers.entries[account_gui_index];
+ if(len<0){notify_user("Could not read texture pack choices.");return;}
+ size_t bytes=lce_tex_choice_conf_set(len?old:nullptr,(size_t)len,server.host,server.port,next,out,sizeof out);
+ if(!bytes){notify_user("Could not save texture pack choice.");return;}
+ (void)sceKernelUnlink(account_texture_temp); // remove only our stale interrupted write
+ int fd=sceKernelOpen(account_texture_temp,O_WRONLY|O_CREAT|O_EXCL|O_NOFOLLOW,0600);bool ok=fd>=0;
+ if(ok){size_t written=0;while(written<bytes){long n=(long)sceKernelWrite(fd,out+written,bytes-written);if(n<=0){ok=false;break;}written+=(size_t)n;}
+  if(ok)ok=sceKernelFsync(fd)>=0;if(sceKernelClose(fd)<0)ok=false;
+  if(ok)ok=sceKernelRename(account_texture_temp,account_texture_path)>=0;
+  if(!ok)(void)sceKernelUnlink(account_texture_temp);
+ }
+ if(!ok){notify_user("Could not save texture pack choice.");return;}
+ memcpy(account_texture_key,next,account_bounded_len(next,sizeof next)+1);
+}
+static bool account_gui_options(void *,bool remember) {
+ if(!valid_message_query() || !mc195_dialog_claim(MC195_DIALOG_ACCOUNT))return false;
+ const unsigned n=native_menu::used;
+ if(n>=native_menu::capacity){(void)mc195_dialog_release(MC195_DIALOG_ACCOUNT,true,true,true);return false;}
+ auto &slot=native_menu::slots[n];account_gui_slot=&slot;
+ size_t i=lce_tex_choice_find(account_texture_list,account_texture_count,account_texture_key);
+ const char *name=i<account_texture_count?account_texture_list[i].name:"Server choice";
+ char label[96];snprintf(label,sizeof label,"Texture pack: %s",name);
+ size_t j=0;for(;j+1<sizeof account_texture_labels[n]/sizeof(char16_t) && label[j];++j)account_texture_labels[n][j]=(unsigned char)label[j];account_texture_labels[n][j]=0;
+ slot.labels[0]=u"Server options";slot.labels[1]=u"Select a texture pack for this console.";
+ slot.labels[2]=account_texture_labels[n];slot.labels[3]=remember?u"Save Details: On":u"Save Details: Off";
+ slot.labels[4]=u"Back";
+ for(unsigned k=0;k<3;++k)slot.ids[k]=native_menu::id_base+n*8+2+k;
+ __atomic_store_n(&native_menu::used,n+1,__ATOMIC_RELEASE);
+ auto request=(dialog::Request)(game_base+0x9de300);
+ request((void *)(game_base+0x143b290),native_menu::id_base+n*8,native_menu::id_base+n*8+1,
+         slot.ids,3,account_gui_pad,dialog::callback,&slot.pending,slot.labels[1],0,false,true);
+ return true;
+}
+static bool account_gui_show(void *,bool has_name,bool has_password,bool /*remember*/,bool saved_token) {
  if(!valid_message_query() || !mc195_dialog_claim(MC195_DIALOG_ACCOUNT))return false;
  const unsigned n=native_menu::used;
  if(n>=native_menu::capacity) {
@@ -368,7 +509,7 @@ static bool account_gui_show(void *,bool has_name,bool has_password,bool remembe
  slot.labels[2]=has_name?u"Username: set":u"Username: enter";
  slot.labels[3]=saved_token?u"Password: saved":has_password?u"Password: set":u"Password: enter";
  slot.labels[4]=u"Connect";
- slot.labels[5]=remember?u"Save Details: On":u"Save Details: Off";
+ slot.labels[5]=u"Options";
  for(unsigned i=0;i<4;++i)slot.ids[i]=native_menu::id_base+n*8+2+i;
  __atomic_store_n(&native_menu::used,n+1,__ATOMIC_RELEASE);
  auto request=(dialog::Request)(game_base+0x9de300);
@@ -402,9 +543,11 @@ static lce_login_gui::Input account_gui_take_input(void *,uint16_t *out,size_t s
 static bool account_gui_connect(void *,const char *username,const char *secret,bool use_token,bool remember) {
  alignas(8) unsigned char record[0x208];
  if(!account_route || !lce_join_list::make_join_record(record,sizeof record,account_gui_index))return false;
+ uint32_t tex_id=0;bool selected_texture=lce_tex_choice_resolve(account_texture_list,account_texture_count,account_texture_key,&tex_id)!=0;
+ __atomic_store_n(&account_texture_active,selected_texture?(1ull<<32)|tex_id:0ull,__ATOMIC_RELEASE);
  auto selected=use_token?account_route->select_token(record,account_gui_pad,secret):
   account_route->select_credentials(record,account_gui_pad,username,secret,remember);
- if(selected!=lce_account_join::Selection::Started)return false;
+ if(selected!=lce_account_join::Selection::Started){lce_tex_prelogin_clear();return false;}
  lce_auth_wipe(account_pending_save_name,sizeof account_pending_save_name);
  if(remember){snprintf(account_pending_save_name,sizeof account_pending_save_name,"%s",username);account_pending_save_index=account_gui_index;}
  return true;
@@ -740,6 +883,7 @@ __attribute__((noinline)) static bool minigame_signed_in(void *self, int pad) {
  // online there only while a Mini Games launch from the load menu is active.
  if(ra==0x9455f1 && now<minigame_flow_until){minigame=true;minigame_flow_until=0;}
  if(minigame) {
+  lce_selfsetup_list_opened();
   if(minigame_signed_in_logged<16) {
    ++minigame_signed_in_logged;
    char line[96];snprintf(line,sizeof line,"Mini Games sign-in check at rva=%x answered online.\n",(unsigned)ra);logline(line);
@@ -822,7 +966,7 @@ static void session_report_error(void *,lce_session_coordinator::Error error) {
  __atomic_store_n(&session_report_pending,static_cast<unsigned>(error)+1,__ATOMIC_RELEASE);
 }
 static void session_configure_on_owner_tick() {
- if(!session_runtime || session_runtime->configured() || !session_servers_loaded || session_config_retry || session_config_terminal)return;
+ if(!session_runtime || session_runtime->configured() || !session_servers_loaded || session_config_retry || session_config_terminal || !lce_selfsetup_ready())return;
  if(!session_config_attempt_logged) {session_config_attempt_logged=true;logline("Session configuration attempt.\n");}
  auto *manager=*reinterpret_cast<void **>(game_base+0x143b148);
  lce_session_runtime::Config config{};
@@ -965,7 +1109,23 @@ static bool valid_message_query() {
         *(const uintptr_t*)slot==game_base+0x9dcc00;
 }
 #endif
-static void logline(const char *s){size_t n=0;while(s[n])++n;int fd=sceKernelOpen(LOG,0x209,0666);if(fd>=0){sceKernelWrite(fd,s,n);sceKernelClose(fd);}}
+// Append-only text log. Bounded: the file is restarted when it exceeds
+// kLogCap at the first write of a launch, and one launch writes at most
+// kLogCap bytes. Owner-only permissions in release. Never log credentials or tickets.
+static void logline(const char *s){
+ static constexpr uint64_t kLogCap=512*1024;
+ static uint64_t written=0;static bool checked=false;
+ size_t n=0;while(s[n])++n;
+ if(written+n>kLogCap)return;
+ int flags=0x209; // O_WRONLY|O_CREAT|O_APPEND
+ if(!checked){checked=true;OrbisKernelStat st;if(sceKernelStat(LOG,&st)>=0 && (uint64_t)st.st_size>kLogCap)flags|=0x400;} // O_TRUNC
+#if defined(LCE_RELEASE)
+ const int mode=0600;
+#else
+ const int mode=0666;   // dev: readable over FTP without a chmod
+#endif
+ int fd=sceKernelOpen(LOG,flags|O_NOFOLLOW,mode);if(fd>=0){sceKernelWrite(fd,s,n);sceKernelClose(fd);written+=n;}
+}
 extern "C" __attribute__((visibility("hidden"))) void observe_entry(void *);
 // Preserve the original call's argument, return address and stack; r15 is the
 // normal loop's client on the one verified caller. Other callers fail closed.
@@ -1014,20 +1174,31 @@ extern "C" __attribute__((visibility("hidden"),noinline)) void observe(void *arg
    }
    else {account_keyboard=nullptr;logline("Account keyboard ABI rejected.\n");}
   }
-  if(!account_route && account_flow && session_servers_loaded) {
+  if(lce_selfsetup_ready() && lce_selfsetup_take_reload() && session_runtime && !session_runtime->configured() && !account_route) {
+   session_servers_loaded=session_runtime->load_server_list(session_servers,session_config_buffer,sizeof session_config_buffer);
+   logline(session_servers_loaded?"Self-setup: server list reloaded.\n":"Self-setup: reloaded server list is invalid.\n");
+  }
+  if(!account_route && account_flow && session_servers_loaded && lce_selfsetup_ready()) {
    lce_account_join::Ops route_ops{nullptr,account_join_ready,account_join_begin,account_join_report};
    account_route=new (account_route_storage) lce_account_join::Route(*account_flow,session_servers,route_ops);
    logline("Account join route initialized.\n");
   }
   if(account_gui_request) {
    account_gui_request=0;
+   account_texture_prepare(account_gui_index);
    lce_login_gui::Ops gui_ops{nullptr,account_gui_show,account_gui_take_menu,account_gui_closed,
-                             account_gui_start_input,account_gui_take_input,account_gui_load,account_gui_forget,account_gui_connect};
+                             account_gui_start_input,account_gui_take_input,account_gui_load,account_gui_forget,account_gui_connect,account_gui_options,account_texture_cycle};
    if(!account_gui.start(gui_ops))notify_user("Server login is unavailable.");
   }
   account_gui.tick();
+#if !defined(LCE_RELEASE)
   lce_vtable_trace_poll();
+#endif
   lce_plugin_update_tick();
+#if !defined(LCE_OFFLINE_PREVIEW)
+  {static bool healthy=false;
+   if(!healthy && sceKernelGetProcessTime()>45000000ull){healthy=true;lce_plugin_update_healthy();}}
+#endif
   if(account_route)account_route->tick();
   if(account_route && session_runtime && session_runtime->configured() &&
      session_runtime->status().published && !__atomic_load_n(&account_bootstrap_state,__ATOMIC_ACQUIRE)) {
@@ -1048,6 +1219,9 @@ extern "C" __attribute__((visibility("hidden"),noinline)) void observe(void *arg
    bool installed=pages && install_account_join_hook(p0);
    logline(installed?"Account join hook installed.\n":"Account join hook installation failed; inspect rollback log.\n");
    logline(install_minigame_signin_hook()?"Mini Games sign-in hook installed.\n":"Mini Games sign-in hook failed.\n");
+#if !defined(LCE_RELEASE)
+   // Diagnostics only (dialog callers, disconnect reasons/actions, unknown
+   // packet ids): not installed in release builds.
    bool trace0=install_dialog_trace(0,0x9bd4d0,(uintptr_t)&dialog_trace_0);
    bool trace1=install_dialog_trace(1,0x9bd520,(uintptr_t)&dialog_trace_1);
    bool trace2=install_dialog_trace(2,0x9de300,(uintptr_t)&dialog_trace_2);
@@ -1061,6 +1235,7 @@ extern "C" __attribute__((visibility("hidden"),noinline)) void observe(void *arg
    // reinstall until their concrete failure is understood and isolated.
    bool invalid_trace=install_invalid_packet_trace();
    logline(invalid_trace?"Invalid packet failure-only trace installed.\n":"Invalid packet failure-only trace failed.\n");
+#endif
    session_start_hook_ready=install_dialog_trace(4,0x943440,(uintptr_t)&session_run_network_game);
    logline(session_start_hook_ready?"Custom gameplay transition hook installed.\n":"Custom gameplay transition hook failed.\n");
    bool selection=install_dialog_trace(3,0x9c19e0,(uintptr_t)&offline_selection);
@@ -1110,6 +1285,11 @@ extern "C" __attribute__((visibility("hidden"),noinline)) void observe(void *arg
  bool claimed=mc_tabs_claim_owner_thread(arg,caller);
 #if defined(MC_LEGACY195) && defined(MC_SUPER195)
  if(claimed && owned_tick && __atomic_load_n(&menu_enabled,__ATOMIC_ACQUIRE) && debug_menu_permitted())mc195_tabs_sessions_tick(arg,caller,game_base);
+ else if(claimed && owned_tick && __atomic_load_n(&menu_enabled,__ATOMIC_ACQUIRE) && lce_chat_render_wanted()) {
+  // Players without debug access: render-only tick for the chat keyboard / chat log overlay
+  // (chat_overlay.cpp). No session tick, so the debug menu chord stays refused and the pads stay released.
+  mc195_debug_pad_master_enable(0);(void)mc195_tabs::tick(arg,caller);
+ }
  else {
   mc195_debug_pad_master_enable(0);mc195_tabs::invalidate_all();
  }
@@ -1221,6 +1401,23 @@ namespace weather_monitor {
 static Mailbox menu_mailbox_storage;
 Mailbox &menu_mailbox() { return menu_mailbox_storage; }
 }
+#if defined(MC_SUPER195)
+extern "C" void lce_perf_pump(void);
+#endif
+#if defined(MC_SUPER195)
+extern "C" void lce_worldsize_pump(uintptr_t base,int remote);
+// Huge-world game-code words (worldsize_lce.cpp) are armed only while this console is
+// neither joining nor joined to an LCE server: any phase from Connecting to Active disarms.
+static int worldsize_remote_phase() {
+ if(!session_runtime || !session_runtime->configured())return 0;
+ switch(session_runtime->coordinator().phase()) {
+  case lce_session_coordinator::Phase::Connecting: case lce_session_coordinator::Phase::AwaitingGameThread:
+  case lce_session_coordinator::Phase::CleanupPending: case lce_session_coordinator::Phase::Starting:
+  case lce_session_coordinator::Phase::Active: return 1;
+  default: return lce_mod_gate_on_server()?1:0;
+ }
+}
+#endif
 static void *monitor(void *) {
  unsigned last=0;
 #ifdef MC_NATIVE_DEBUG_DIAGNOSTICS
@@ -1237,7 +1434,9 @@ static void *monitor(void *) {
   "renderer frame inspection or lock failed", "renderer frame preparation failed", "renderer acquisition or lock failed",
   "Present module lookup failed", "Present identity rejected", "Present cooperative signature rejected", "Present call or entry bytes rejected",
   "Present slot mapping rejected", "Present slot value rejected", "Present publication already claimed", "Present slot could not be made writable", "Present slot compare exchange failed",
-  "pad lock busy; frame skipped", "session invalidated", "frame aborted", "menu owner lost", "menu session closed"
+  "pad lock busy; frame skipped", "session invalidated", "frame aborted", "menu owner lost", "menu session closed",
+  "owner guard: invalidated", "owner guard: inactive or poisoned", "owner guard: wrong thread", "owner guard: pad busy",
+  "owner guard: pad dead", "owner guard: world epoch changed", "menu opening pad slot 0", "menu opening pad slot 1", "menu opening pad slot 2", "menu opening pad slot 3"
  };
 #endif
  // This thread is the sole consumer of mc_weather_ui_result. Keep ownership
@@ -1247,6 +1446,12 @@ static void *monitor(void *) {
  uint64_t menu_ticket=0;
  for(;;) {
   sceKernelUsleep(100000);
+#if defined(MC_SUPER195)
+  lce_perf_pump(); // perf_boot.cpp: buffered BOOT_MS/DLC_* lines, live frame-rate options
+#endif
+#if defined(MC_SUPER195)
+  lce_worldsize_pump(game_base,worldsize_remote_phase()); // worldsize_lce.cpp: Huge local worlds
+#endif
 #if defined(MC_METADATA_SNAPSHOT) && defined(MC_LEGACY195) && defined(MC_SUPER195)
   static bool metadata_reported=false;
   const unsigned metadata_state=__atomic_load_n(&metadata_snapshot_state,__ATOMIC_ACQUIRE);
@@ -1363,6 +1568,11 @@ static void *monitor(void *) {
 }
 EXPORT int32_t plugin_load(int32_t,const char **) {
  if(__atomic_load_n(&resident,__ATOMIC_ACQUIRE))return 0;
+#if defined(MC_LEGACY195) && defined(MC_SUPER195) && !defined(LCE_OFFLINE_PREVIEW)
+ // A freshly auto-updated plugin that failed to start twice rolls itself back
+ // (plugin_update.cpp) and stays inert for this launch.
+ if(lce_plugin_update_boot())return 0;
+#endif
  OrbisKernelModuleInfo m={};m.size=sizeof m;if(sceKernelGetModuleInfo(0,&m))return 0;m.name[255]=0;
 #if defined(MC_LEGACY195)
  if(!m.segmentCount || !m.segmentInfo[0].address)return 0;
@@ -1393,8 +1603,11 @@ EXPORT int32_t plugin_load(int32_t,const char **) {
 #if defined(MC_LEGACY195) && defined(MC_SUPER195)
  if(!session_runtime) session_runtime=new (session_runtime_storage) lce_session_runtime::Runtime(session_scheduler);
  logline("Session runtime explicitly initialized.\n");
+#if !defined(LCE_OFFLINE_PREVIEW)
  session_servers_loaded=session_runtime->load_server_list(session_servers,session_config_buffer,sizeof session_config_buffer);
- if(!session_servers_loaded)logline("Server config missing/invalid; Join hooks remain disabled.\n");
+ if(!session_servers_loaded)logline("Server config missing/invalid; Join hooks wait for self-setup.\n");
+#endif
+ lce_selfsetup_boot();
 #endif
  if(!install_localization(base,size,m.segmentInfo[0].prot)){logline("Localization hook failed; no dialog.\n");return 0;}
 #if defined(MC_LEGACY195)

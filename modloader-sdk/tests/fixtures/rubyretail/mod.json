@@ -1,0 +1,9 @@
+{"format":1,"id":"rubyretail","name":"Ruby (retail subset)","version":"1.0.1","author":"tests",
+ "description":"Only what the retail 1.95 backend can publish today: generic items, shaped count-1 recipes, names, icons.",
+ "textures":{"rubyretail:i_ruby":{"file":"../../../examples/java-rubymod/src/assets/rubymod/textures/item/ruby.png"},"rubyretail:i_nugget":{"file":"textures/ruby_nugget.png"},"rubyretail:i_wand":{"file":"textures/ruby_wand.png"}},
+ "items":[{"key":"rubyretail:ruby","name":"ruby","texture":"rubyretail:i_ruby","creative_tab":"minecraft:materials"},
+          {"key":"rubyretail:ruby_nugget","name":"Ruby Nugget","texture":"rubyretail:i_nugget","creative_tab":"minecraft:materials"},
+          {"key":"rubyretail:ruby_wand","name":"Ruby Wand","texture":"rubyretail:i_wand","max_stack":1,"creative_tab":"minecraft:tools"}],
+ "recipes":[{"key":"rubyretail:ruby_from_nuggets","type":"shaped","pattern":["NNN","NNN","NNN"],"keys":{"N":"rubyretail:ruby_nugget"},"result":"rubyretail:ruby","craft_tab":"minecraft:materials"},
+            {"key":"rubyretail:ruby_wand","type":"shaped","pattern":[" R","S "],"keys":{"R":"rubyretail:ruby","S":"minecraft:stick"},"result":"rubyretail:ruby_wand","craft_tab":"minecraft:tools"}],
+ "lang":{"en_US":{"rubyretail:ruby":"Ruby","rubyretail:ruby_wand":"Ruby Wand"}}}

@@ -1,0 +1,314 @@
+{
+ "format": 1,
+ "id": "allcontent",
+ "name": "All Content",
+ "version": "1.0.1",
+ "author": "tests",
+ "textures": {
+  "allcontent:gem": "textures/gem.png",
+  "allcontent:ore": {
+   "file": "textures/ore.png",
+   "atlas": "terrain"
+  },
+  "allcontent:fx": {
+   "file": "textures/fx.png",
+   "atlas": "icon"
+  },
+  "allcontent:armor_layer": {
+   "file": "textures/armor_layer.png",
+   "atlas": "armor"
+  },
+  "allcontent:golem_skin": {
+   "file": "textures/golem.png",
+   "atlas": "entity"
+  },
+  "allcontent:gem_pick": "textures/gem_pick.png",
+  "allcontent:gem_helmet": "textures/gem_helmet.png",
+  "allcontent:gem_stew": "textures/gem_stew.png"
+ },
+ "items": [
+  {
+   "key": "allcontent:gem",
+   "name": "Gem",
+   "texture": "allcontent:gem",
+   "fuel_ticks": 800
+  },
+  {
+   "key": "allcontent:gem_pick",
+   "name": "Gem Pickaxe",
+   "texture": "allcontent:gem_pick",
+   "kind": "pickaxe",
+   "tier": "diamond",
+   "max_damage": 1200,
+   "mining_speed": 9.0,
+   "repair_item": "allcontent:gem",
+   "enchantability": 12
+  },
+  {
+   "key": "allcontent:gem_helmet",
+   "name": "Gem Helmet",
+   "texture": "allcontent:gem_helmet",
+   "kind": "helmet",
+   "max_damage": 300,
+   "armor_points": 3,
+   "armor_texture": "allcontent:armor_layer"
+  },
+  {
+   "key": "allcontent:gem_stew",
+   "name": "Gem Stew",
+   "texture": "allcontent:gem_stew",
+   "kind": "food",
+   "food": {
+    "hunger": 6,
+    "saturation": 0.6,
+    "effects": [
+     {
+      "effect": "minecraft:regeneration",
+      "duration": 100
+     },
+     {
+      "effect": "allcontent:sparkle",
+      "duration": 200,
+      "chance": 50
+     }
+    ]
+   }
+  }
+ ],
+ "blocks": [
+  {
+   "key": "allcontent:gem_ore",
+   "name": "Gem Ore",
+   "texture": "allcontent:ore",
+   "hardness": 3,
+   "harvest_tier": "iron",
+   "harvest_tool": "pickaxe",
+   "drop": "allcontent:gem",
+   "drops": [
+    1,
+    3
+   ],
+   "light": 2
+  },
+  {
+   "key": "allcontent:gem_chest",
+   "name": "Gem Chest",
+   "texture": "allcontent:ore",
+   "storage_slots": 27,
+   "placement": "facing",
+   "material": "wood",
+   "sound": "wood",
+   "flammability": 5
+  }
+ ],
+ "effects": [
+  {
+   "key": "allcontent:sparkle",
+   "name": "Sparkle",
+   "color": "#ffee00",
+   "beneficial": 1,
+   "icon": "allcontent:fx",
+   "clone_of": "minecraft:glowing"
+  }
+ ],
+ "potions": [
+  {
+   "key": "allcontent:sparkle_potion",
+   "name": "Potion of Sparkle",
+   "effects": [
+    {
+     "effect": "allcontent:sparkle",
+     "duration": 3600
+    }
+   ],
+   "splash": 1
+  }
+ ],
+ "brewing": [
+  {
+   "key": "allcontent:brew_sparkle",
+   "input": "minecraft:awkward",
+   "reagent": "allcontent:gem",
+   "output": "allcontent:sparkle_potion"
+  }
+ ],
+ "enchantments": [
+  {
+   "key": "allcontent:shine",
+   "name": "Shine",
+   "max_level": 3,
+   "weight": 5,
+   "applies_to": [
+    "pickaxe",
+    "sword"
+   ],
+   "clone_of": "minecraft:efficiency"
+  }
+ ],
+ "fuels": [
+  {
+   "item": "minecraft:stick",
+   "burn_ticks": 150
+  }
+ ],
+ "entities": [
+  {
+   "key": "allcontent:gem_golem",
+   "name": "Gem Golem",
+   "base_mob": "minecraft:iron_golem",
+   "texture": "allcontent:golem_skin",
+   "health": 60,
+   "category": "creature",
+   "spawn_weight": 5,
+   "min_group": 1,
+   "max_group": 2,
+   "goals": [
+    {
+     "goal": "wander",
+     "speed": 0.6
+    },
+    {
+     "goal": "look_at_player"
+    },
+    {
+     "goal": "follow_tempt_item",
+     "param": "allcontent:gem"
+    }
+   ],
+   "drops": [
+    {
+     "item": "allcontent:gem",
+     "min": 1,
+     "max": 3,
+     "chance": 100,
+     "looting": 1
+    }
+   ],
+   "spawn_biomes": [
+    "minecraft:plains"
+   ],
+   "egg_primary": "#2244ff",
+   "egg_secondary": "#ffffff",
+   "sound_ambient": "allcontent:chime"
+  }
+ ],
+ "ores": [
+  {
+   "key": "allcontent:gem_ore_gen",
+   "block": "allcontent:gem_ore",
+   "size": 6,
+   "per_chunk": 4,
+   "min_y": 5,
+   "max_y": 40
+  }
+ ],
+ "structures": [
+  {
+   "key": "allcontent:shrine",
+   "size_x": 3,
+   "size_y": 2,
+   "size_z": 1,
+   "palette": [
+    "minecraft:stone",
+    "allcontent:gem_ore"
+   ],
+   "legend": {
+    "S": "minecraft:stone",
+    "G": "allcontent:gem_ore"
+   },
+   "layers": [
+    [
+     "SSS"
+    ],
+    [
+     " G "
+    ]
+   ]
+  }
+ ],
+ "features": [
+  {
+   "key": "allcontent:shrine_gen",
+   "kind": "structure",
+   "structure": "allcontent:shrine",
+   "per_chunk": 1,
+   "rarity": 40,
+   "min_y": 60,
+   "max_y": 90
+  }
+ ],
+ "biomes": [
+  {
+   "key": "allcontent:gem_fields",
+   "name": "Gem Fields",
+   "temperature": 0.8,
+   "rainfall": 0.4,
+   "top_block": "minecraft:grass",
+   "filler_block": "minecraft:dirt",
+   "grass": "#55ff99",
+   "weight": 5,
+   "features": [
+    "allcontent:gem_ore_gen"
+   ]
+  }
+ ],
+ "sounds": [
+  {
+   "key": "allcontent:chime",
+   "file": "sounds/chime.wav",
+   "volume": 1.0,
+   "pitch": 1.0
+  },
+  {
+   "key": "allcontent:ding",
+   "clone_of": "minecraft:random.orb"
+  }
+ ],
+ "particles": [
+  {
+   "key": "allcontent:sparkles",
+   "clone_of": "minecraft:reddust",
+   "tint": "#ffff00"
+  }
+ ],
+ "scripts": {
+  "main.lua": "scripts/main.lua"
+ },
+ "lang": {
+  "en_US": {
+   "allcontent:gem": "Gem"
+  },
+  "de_DE": {
+   "allcontent:gem": "Edelstein"
+  }
+ },
+ "config": {
+  "general.ore_rate": {
+   "default": 8,
+   "min": 1,
+   "max": 64,
+   "comment": "Ruby veins per chunk.\nSet to 1 for rare ore."
+  },
+  "general.speed": {
+   "default": 1.25,
+   "min": 0.1,
+   "max": 10.0
+  },
+  "general.enable_wand": {
+   "default": true,
+   "comment": "Register the wand"
+  },
+  "general.greeting": {
+   "default": "Hi \"miner\"\tC:\\ok"
+  },
+  "general.ores": {
+   "default": [
+    "minecraft:iron_ore",
+    3,
+    false
+   ]
+  },
+  "client.render.fancy": false,
+  "top_level": -7
+ }
+}

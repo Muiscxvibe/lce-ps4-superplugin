@@ -1,0 +1,6 @@
+{"format":1,"id":"rubytools","name":"Ruby Tools","version":"0.3.0","author":"tests","description":"depends on rubymod",
+ "dependencies":{"rubymod":"1.0"},
+ "textures":{"rubytools:i_sword":{"file":"../../../examples/java-rubymod/src/assets/rubymod/textures/item/ruby_pickaxe.png","atlas":"items"}},
+ "items":[{"key":"rubytools:ruby_sword","name":"Ruby Sword","texture":"rubytools:i_sword","kind":"sword","max_damage":700,"tier":"iron","creative_tab":"minecraft:combat"}],
+ "recipes":[{"key":"rubytools:ruby_sword","type":"shaped","pattern":["R","R","S"],"keys":{"R":"rubymod:ruby","S":"minecraft:stick"},"result":"rubytools:ruby_sword","craft_tab":"minecraft:tools"}],
+ "lang":{"en_US":{"rubytools:ruby_sword":"Ruby Sword"},"fr_FR":{"rubytools:ruby_sword":"Épée en rubis"}}}

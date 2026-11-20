@@ -1,0 +1,247 @@
+{
+ "format": 1,
+ "id": "retailall",
+ "name": "Retail All",
+ "version": "1.0.1",
+ "author": "tests",
+ "description": "Every content type the composite retail195 backend can publish on 1.95 (and nothing it refuses).",
+ "textures": {
+  "retailall:gem": "textures/gem.png",
+  "retailall:ore": {
+   "file": "textures/ore.png",
+   "atlas": "terrain"
+  },
+  "retailall:gem_pick": "textures/gem_pick.png",
+  "retailall:gem_sword": "textures/gem_sword.png",
+  "retailall:gem_helmet": "textures/gem_helmet.png",
+  "retailall:gem_stew": "textures/gem_stew.png",
+  "retailall:script_gem": "textures/script_gem.png"
+ },
+ "items": [
+  {
+   "key": "retailall:gem",
+   "name": "Gem",
+   "texture": "retailall:gem",
+   "creative_tab": "minecraft:materials"
+  },
+  {
+   "key": "retailall:gem_pick",
+   "name": "Gem Pickaxe",
+   "texture": "retailall:gem_pick",
+   "kind": "pickaxe",
+   "tier": "iron",
+   "max_damage": 900,
+   "repair_item": "retailall:gem",
+   "enchantability": 12
+  },
+  {
+   "key": "retailall:gem_sword",
+   "name": "Gem Sword",
+   "texture": "retailall:gem_sword",
+   "kind": "sword",
+   "tier": "diamond",
+   "max_damage": 1200
+  },
+  {
+   "key": "retailall:gem_helmet",
+   "name": "Gem Helmet",
+   "texture": "retailall:gem_helmet",
+   "kind": "helmet",
+   "max_damage": 300,
+   "armor_points": 3
+  },
+  {
+   "key": "retailall:gem_stew",
+   "name": "Gem Stew",
+   "texture": "retailall:gem_stew",
+   "kind": "food",
+   "max_stack": 16,
+   "food": {
+    "hunger": 6,
+    "saturation": 0.6,
+    "effects": [
+     {
+      "effect": "minecraft:regeneration",
+      "duration": 100,
+      "chance": 50
+     }
+    ]
+   }
+  }
+ ],
+ "blocks": [
+  {
+   "key": "retailall:gem_ore",
+   "name": "Gem Ore",
+   "texture": "retailall:ore",
+   "hardness": 3,
+   "resistance": 3,
+   "harvest_tool": "pickaxe",
+   "drop": "retailall:gem",
+   "drops": [
+    1,
+    3
+   ],
+   "light": 2
+  }
+ ],
+ "recipes": [
+  {
+   "key": "retailall:pick",
+   "type": "shaped",
+   "pattern": [
+    "GGG",
+    " S ",
+    " S "
+   ],
+   "keys": {
+    "G": "retailall:gem",
+    "S": "minecraft:stick"
+   },
+   "result": "retailall:gem_pick",
+   "craft_tab": "minecraft:tools"
+  },
+  {
+   "key": "retailall:stew",
+   "type": "shapeless",
+   "ingredients": [
+    "retailall:gem",
+    "minecraft:bowl"
+   ],
+   "result": "retailall:gem_stew",
+   "craft_tab": "minecraft:food"
+  },
+  {
+   "key": "retailall:gems_from_wool",
+   "type": "shaped",
+   "pattern": [
+    "W"
+   ],
+   "keys": {
+    "W": "minecraft:wool@14"
+   },
+   "result": "retailall:gem",
+   "count": 4,
+   "craft_tab": "minecraft:materials"
+  }
+ ],
+ "smelting": [
+  {
+   "key": "retailall:smelt_ore",
+   "input": "retailall:gem_ore",
+   "result": "retailall:gem",
+   "count": 2,
+   "xp": 0.7
+  },
+  {
+   "key": "retailall:smelt_gem",
+   "input": "retailall:gem",
+   "result": "minecraft:emerald",
+   "xp": 1.0
+  }
+ ],
+ "brewing": [
+  {
+   "key": "retailall:brew",
+   "input": "minecraft:awkward",
+   "reagent": "retailall:gem",
+   "output": "minecraft:regeneration"
+  }
+ ],
+ "entities": [
+  {
+   "key": "retailall:gem_zombie",
+   "name": "Gem Zombie",
+   "base_mob": "minecraft:zombie",
+   "health": 30,
+   "category": "monster",
+   "spawn_weight": 10,
+   "min_group": 1,
+   "max_group": 2,
+   "attack_damage": 4,
+   "move_speed": 0.3,
+   "goals": [
+    {
+     "goal": "wander",
+     "speed": 1.0
+    },
+    {
+     "goal": "melee_attack",
+     "speed": 1.2
+    }
+   ],
+   "spawn_biomes": [
+    "minecraft:plains"
+   ]
+  }
+ ],
+ "ores": [
+  {
+   "key": "retailall:gem_ore_gen",
+   "block": "retailall:gem_ore",
+   "size": 6,
+   "per_chunk": 4,
+   "min_y": 5,
+   "max_y": 40
+  }
+ ],
+ "structures": [
+  {
+   "key": "retailall:shrine",
+   "size_x": 3,
+   "size_y": 2,
+   "size_z": 1,
+   "palette": [
+    "minecraft:stone",
+    "retailall:gem_ore"
+   ],
+   "legend": {
+    "S": "minecraft:stone",
+    "G": "retailall:gem_ore"
+   },
+   "layers": [
+    [
+     "SSS"
+    ],
+    [
+     " G "
+    ]
+   ]
+  }
+ ],
+ "features": [
+  {
+   "key": "retailall:shrine_gen",
+   "kind": "structure",
+   "structure": "retailall:shrine",
+   "per_chunk": 1,
+   "rarity": 40
+  }
+ ],
+ "sounds": [
+  {
+   "key": "retailall:ding",
+   "clone_of": "minecraft:random.orb",
+   "pitch": 1.5
+  }
+ ],
+ "particles": [
+  {
+   "key": "retailall:sparkles",
+   "clone_of": "minecraft:reddust",
+   "tint": "#ffff00"
+  }
+ ],
+ "scripts": {
+  "main.lua": "scripts/main.lua"
+ },
+ "lang": {
+  "en_US": {
+   "retailall:gem": "Gem",
+   "retailall:gem_ore": "Gem Ore"
+  },
+  "de_DE": {
+   "retailall:gem": "Edelstein"
+  }
+ }
+}

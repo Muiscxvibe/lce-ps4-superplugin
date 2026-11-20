@@ -1,0 +1,116 @@
+--- a/Minecraft.Client/MinigameHost.cpp
++++ b/Minecraft.Client/MinigameHost.cpp
+@@ -1,6 +1,7 @@
+ #include "stdafx.h"
+ // PS4 1.95 minigame host. See MinigameHost.h and docs/PS4-195-MINIGAME-PROTOCOL.md.
+ #include "MinigameHost.h"
++#include "MinigameTumbleSpawn.h"
+ 
+ #include <algorithm>
+ #include <cstdarg>
+@@ -654,7 +655,7 @@
+ 		Wire w; w.i16(static_cast<int>(blob.b.size())); w.raw(blob.b);
+ 		return std::make_shared<PS4RawPacket>(168, w.b);
+ 	}
+-	int votesFor(int a, int b) { int n = 0; for (auto &p : online()) { PState &s = ps(p); if (s.voted && s.voteA == a && s.voteB == b) ++n; } return n; }
++	int votesFor(int a, int b) { int n = 0; for (auto &p : online()) { auto it = players.find(p->name); if (it != players.end() && it->second.voted && it->second.voteA == a && it->second.voteB == b) ++n; } return n; }
+ 	void sendVoteTallies(const std::shared_ptr<ServerPlayer> &to)
+ 	{
+ 		for (int i : candidates) {
+@@ -1035,6 +1036,15 @@
+ 		const int topY = (g.y0 + g.y1) / 2 + (layers - 1) * dy / 2;
+ 		const float a = 6.2831853f * i / (std::max)(1, n);
+ 		s.x = (g.x0 + g.x1) / 2 + 0.5 + std::cos(a) * 8; s.z = (g.z0 + g.z1) / 2 + 0.5 + std::sin(a) * 8; s.y = topY + 1;
++		ServerLevel *level = server->getLevel(0);
++		const int cx = (g.x0 + g.x1) / 2, cz = (g.z0 + g.z1) / 2;
++		const int radius = (std::min)(22, (std::max)(4, (std::min)(g.x1 - g.x0, g.z1 - g.z0) / 2));
++		int unusedAux = 0; const int surface = tumbleBlockId(0, cx, cz, unusedAux);
++		int x = 0, z = 0;
++		if (level && minigame_tumble::nearest_support(cx, cz, radius, s.x, s.z,
++			[level, topY, surface](int bx, int bz) { return level->getTile(bx, topY, bz) == surface; }, x, z)) {
++			s.x = x + 0.5; s.z = z + 0.5;
++		} else logf("tumble: no generated top-layer support for spawn %d/%d", i, n);
+ 		s.yRot = static_cast<float>(std::fmod(std::atan2(-std::cos(a), std::sin(a)) * 57.29578f + 360.0f, 360.0f));
+ 		return s;
+ 	}
+@@ -1426,9 +1436,12 @@
+ 		if (it == players.end()) return;
+ 		const bool wasAlive = it->second.alive;
+ 		const bool wasPending = !it->second.acked && (state == S_LOAD_A || state == S_LOAD_B);
++		const bool hadVote = (state == S_LOBBY || state == S_COUNTDOWN || state == S_MAP_SELECT) && it->second.voted;
++		const int voteA = it->second.voteA, voteB = it->second.voteB;
+ 		players.erase(it);
+ 		if (wasPending) --pendingAcks;
+ 		broadcast(readyPacket(static_cast<int>(p->getPlayerIndex()), false));
++		if (hadVote) broadcast(votePacket(1, votesFor(voteA, voteB), voteA, voteB));
+ 		logf("player %s left (alive=%d)", narrow(p->name).c_str(), wasAlive ? 1 : 0);
+ 	}
+ 	// Lethal damage during a round: no vanilla death (no death screen / respawn round trip). Battle drops the
+--- /dev/null
++++ b/Minecraft.Client/MinigameTumbleSpawn.h
+@@ -0,0 +1,21 @@
++#pragma once
++
++namespace minigame_tumble {
++// Select an actual generated block nearest the desired spawn. The predicate
++// checks the loaded level, so shapes with a central hole and small arenas work.
++template <typename HasBlock>
++bool nearest_support(int cx, int cz, int radius, double desired_x, double desired_z,
++                     HasBlock has_block, int &out_x, int &out_z) {
++    bool found = false; double best = 0;
++    for (int dx = -radius; dx <= radius; ++dx)
++        for (int dz = -radius; dz <= radius; ++dz) {
++            const int x = cx + dx, z = cz + dz;
++            const double sx = x + 0.5 - desired_x, sz = z + 0.5 - desired_z;
++            const double distance = sx * sx + sz * sz;
++            if ((!found || distance < best) && has_block(x, z)) {
++                found = true; best = distance; out_x = x; out_z = z;
++            }
++        }
++    return found;
++}
++}
+--- /dev/null
++++ b/tools/test_minigame_tumble_spawn.cpp
+@@ -0,0 +1,41 @@
++#include "../Minecraft.Client/MinigameTumbleSpawn.h"
++#include <cassert>
++#include <cmath>
++#include <initializer_list>
++#include <cstdio>
++
++static bool shape_contains(int shape, int r, int dx, int dz) {
++    const float d = std::sqrt(static_cast<float>(dx * dx + dz * dz)) / r;
++    switch (shape) {
++    case 0: return std::abs(dx) <= r * 0.8f && std::abs(dz) <= r * 0.8f;
++    case 1: return d <= 1.0f;
++    case 2: return d <= 0.55f + 0.45f * std::fabs(std::cos(2.5f * std::atan2(static_cast<float>(dz), static_cast<float>(dx))));
++    case 3: return d <= 1.0f && d >= 0.35f;
++    default: return std::abs(dx) + std::abs(dz) <= r;
++    }
++}
++
++int main() {
++    for (int radius : {4, 10, 22}) for (int shape = 0; shape < 5; ++shape) {
++        constexpr int cx = -33, cz = 47;
++        for (int i = 0; i < 16; ++i) {
++            const float a = 6.2831853f * i / 16;
++            const double target_x = cx + 0.5 + std::cos(a) * 8;
++            const double target_z = cz + 0.5 + std::sin(a) * 8;
++            auto supported = [=](int x, int z) { return shape_contains(shape, radius, x - cx, z - cz); };
++            int x = 0, z = 0;
++            assert(minigame_tumble::nearest_support(cx, cz, radius, target_x, target_z, supported, x, z));
++            assert(supported(x, z));
++            const double chosen = (x + 0.5 - target_x) * (x + 0.5 - target_x) + (z + 0.5 - target_z) * (z + 0.5 - target_z);
++            for (int dx = -radius; dx <= radius; ++dx) for (int dz = -radius; dz <= radius; ++dz) {
++                if (!supported(cx + dx, cz + dz)) continue;
++                const double ddx = cx + dx + 0.5 - target_x, ddz = cz + dz + 0.5 - target_z;
++                assert(chosen <= ddx * ddx + ddz * ddz);
++            }
++        }
++    }
++    int x = 7, z = 9;
++    assert(!minigame_tumble::nearest_support(0, 0, 4, 0, 0, [](int, int) { return false; }, x, z));
++    assert(x == 7 && z == 9);
++    std::puts("Tumble spawn support tests passed");
++}

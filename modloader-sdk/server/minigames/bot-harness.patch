@@ -1,0 +1,20 @@
+--- a/perf-test/mg_bot.py
++++ b/perf-test/mg_bot.py
+@@ -294,6 +294,8 @@
+     ap.add_argument('host'); ap.add_argument('port', type=int); ap.add_argument('count', type=int); ap.add_argument('seconds', type=float)
+     ap.add_argument('--no-ready', action='store_true'); ap.add_argument('--ready-delay', type=float, default=2.0)
+     ap.add_argument('--vote', type=int, default=0, help='candidate index to vote for (-1 = no vote)')
++    ap.add_argument('--leave-bot', type=int, default=0, help='bot index to disconnect early (0 = none)')
++    ap.add_argument('--leave-after', type=float, default=0, help='seconds before the selected bot disconnects')
+     ap.add_argument('--spectate-after', action='store_true'); ap.add_argument('--stagger', type=float, default=1.0)
+     ap.add_argument('--no-ack', action='store_true', help='never send the Loaded (6) ack, like a client still loading')
+     ap.add_argument('--early-chat', action='store_true')
+@@ -301,7 +303,7 @@
+     ap.add_argument('--rx-kbps', type=float, default=0, help='throttle reading to this many kB/s (a slow PS4 client)')
+     ap.add_argument('--dump', default='', help='write each bot\'s raw clientbound stream to <dump>.<name>.bin')
+     a = ap.parse_args()
+-    bots = [MgBot(a.host, a.port, i + 1, a.seconds, a) for i in range(a.count)]
++    bots = [MgBot(a.host, a.port, i + 1, a.leave_after if i + 1 == a.leave_bot else a.seconds, a) for i in range(a.count)]
+     for b in bots: b.start(); time.sleep(a.stagger)
+     for b in bots: b.join()
+     for b in bots: print('#', b.name, 'index', b.selfIndex, 'state', b.state, 'err', b.err, 'pending-ack', b.waiting_ack is not None, 'progress', getattr(b, 'progress', None), 'load-scene', getattr(b, 'loadScene', None), 'rx-MB', round(getattr(b, 'rxBytes', 0) / 1e6, 1), 'dropped', b.dropped)

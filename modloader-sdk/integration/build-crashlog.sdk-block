@@ -1,0 +1,25 @@
+# LCE mod loader SDK (modloader-sdk/integration/shipping-plugin.patch, INTEGRATION.md).
+# 1. Rebuild the r72 translation units this patch changes, with the flags above.
+#    The prebuilt objects are kept once as *.pre-sdk.keep (rollback: copy them back).
+lcesdk=/home/codey/minecraft-lce-work/modloader-sdk
+s195="$root/loader/super_content_steel_nbt_save_195"
+for o in super trace tools_runtime process_resource content_process content_craft_hook craft_provider/integration_provider_capture craft_provider/modded-crafting-candidate; do
+ [ -f "$crash/build/$o.o.pre-sdk.keep" ] || cp "$crash/build/$o.o" "$crash/build/$o.o.pre-sdk.keep"
+done
+clang++ "${flags[@]}" "${cxx[@]}" -c "$s195/super.cpp" -o "$crash/build/super.o"
+[ -f "$crash/build/nbt_lifecycle_shared_scope_mux.o.pre-scope8.keep" ] || cp "$crash/build/nbt_lifecycle_shared_scope_mux.o" "$crash/build/nbt_lifecycle_shared_scope_mux.o.pre-scope8.keep"
+clang++ "${flags[@]}" "${cxx[@]}" -fexceptions -c "$root/loader/shared_server_scope_195/mux.cpp" -o "$crash/build/nbt_lifecycle_shared_scope_mux.o"   # shared scope capacity 8 (room for the LCE SDK)
+clang++ "${flags[@]}" "${cxx[@]}" -I"$root/loader/steel_startup_trace_195" -DSTEEL_TRACE_COMPONENT -c "$s195/registry_trace.cpp" -o "$crash/build/trace.o"
+clang++ "${flags[@]}" "${cxx[@]}" -I"$root/compatibility/ruby/vendor/lua-5.4.8/src" -c "$s195/tools_runtime.cpp" -o "$crash/build/tools_runtime.o"
+clang++ "${flags[@]}" "${cxx[@]}" -I"$root/compatibility/ruby/vendor/lua-5.4.8/src" -Dsteel195_resource_grow=mc195_items_resource_grow -c "$s195/resource.cpp" -o "$crash/build/process_resource.o"
+clang++ "${flags[@]}" "${cxx[@]}" -c "$s195/content_process.cpp" -o "$crash/build/content_process.o"
+clang++ "${flags[@]}" "${cxx[@]}" -c "$root/loader/steel_process_content_195/craft_hook.cpp" -o "$crash/build/content_craft_hook.o"
+clang++ "${flags[@]}" "${cxx[@]}" -I/home/codey/minecraft-ps4-research/loader/modded_crafting_tabs_195/work-r20 -c "$root/loader/additive_recipes_195/craft_ui_capture.cpp" -o "$crash/build/craft_provider/integration_provider_capture.o"
+craft_objs=(); for o in "$crash"/build/craft_provider/*.o; do [ "${o##*/}" = modded-crafting-candidate.o ] || craft_objs+=("$o"); done
+ld.lld -r "${craft_objs[@]}" -o "$crash/build/craft_provider/modded-crafting-candidate.o"
+# Terrain atlas owner with SDK block tiles (gap G1): shared_terrain_195/runtime.cpp built with its own build.sh flags
+# (Steel mode, -Os, no ABI overlay); the unpatched source reproduces the prebuilt object byte for byte (md5 84d1a800...).
+[ -f "$crash/build/shared_terrain_runtime.o.pre-sdk.keep" ] || cp "$crash/build/shared_terrain_runtime.o" "$crash/build/shared_terrain_runtime.o.pre-sdk.keep"
+clang++ --target=x86_64-pc-freebsd12-elf -Os -fPIC -mstackrealign -ffreestanding -fno-stack-protector -fno-builtin -Wall -Wextra -Werror -Wno-unused-function -isysroot "$tc" -isystem "$tc/include" -std=c++17 -fno-exceptions -fno-rtti -c "$root/loader/shared_terrain_195/runtime.cpp" -o "$crash/build/shared_terrain_runtime.o"
+# 2. Build the SDK (core, composite retail195 backend, modules, Lua, netsync) as one object.
+"$lcesdk/build-ps4.sh" >/dev/null

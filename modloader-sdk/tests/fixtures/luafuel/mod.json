@@ -1,0 +1,10 @@
+{
+  "format": 1,
+  "id": "luafuel",
+  "name": "Lua Fuel Test",
+  "version": "1.0.0",
+  "author": "tests",
+  "textures": {"luafuel:icon": {"file": "../rubyretail/textures/ruby_nugget.png"}},
+  "items": [{"key": "luafuel:ember", "name": "Lua Fuel", "texture": "luafuel:icon", "creative_tab": "minecraft:materials"}],
+  "scripts": {"main.lua": "scripts/main.lua"}
+}

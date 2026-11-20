@@ -1,0 +1,39 @@
+{
+  "format": 1,
+  "id": "fueltest",
+  "name": "Fuel API Test",
+  "version": "1.0.0",
+  "author": "tests",
+  "textures": {
+    "fueltest:icon": {
+      "file": "../rubyretail/textures/ruby_nugget.png"
+    }
+  },
+  "items": [
+    {
+      "key": "fueltest:gem",
+      "name": "Test Fuel",
+      "texture": "fueltest:icon",
+      "creative_tab": "minecraft:materials",
+      "fuel_ticks": 1600
+    },
+    {
+      "key": "fueltest:ember",
+      "name": "Test Fuel Ember",
+      "texture": "fueltest:icon",
+      "creative_tab": "minecraft:materials"
+    }
+  ],
+  "fuels": [
+    {
+      "item": "fueltest:ember",
+      "burn_ticks": 800
+    }
+  ],
+  "lang": {
+    "en_US": {
+      "fueltest:gem": "Test Fuel",
+      "fueltest:ember": "Test Fuel Ember"
+    }
+  }
+}

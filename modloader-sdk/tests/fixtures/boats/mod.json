@@ -1,0 +1,26 @@
+{
+ "format": 1,
+ "id": "boats",
+ "name": "Boats (API 1.10)",
+ "version": "1.0.0",
+ "author": "tests",
+ "description": "API 1.10 boat items: a redwood boat (places a spruce boat), a paper boat (birch, stacks to 4) and a jungle raft (jungle). Each places the stock boat of its wood type; a broken boat drops the stock boat item.",
+ "textures": {
+  "boats:redwood_boat": "textures/redwood_boat.png",
+  "boats:paper_boat": "textures/paper_boat.png",
+  "boats:jungle_raft": "textures/jungle_raft.png"
+ },
+ "items": [
+  {"key": "boats:redwood_boat", "name": "Redwood Boat", "texture": "boats:redwood_boat", "creative_tab": "minecraft:transport", "boat": "spruce"},
+  {"key": "boats:paper_boat", "name": "Paper Boat", "texture": "boats:paper_boat", "creative_tab": "minecraft:transport", "boat": "birch", "max_stack": 4},
+  {"key": "boats:jungle_raft", "name": "Jungle Raft", "texture": "boats:jungle_raft", "creative_tab": "minecraft:transport", "boat": 3}
+ ],
+ "recipes": [
+  {"key": "boats:redwood_boat", "type": "shaped", "pattern": ["R R", "RRR"], "keys": {"R": "minecraft:red_sandstone"}, "result": "boats:redwood_boat", "craft_tab": "minecraft:transport"},
+  {"key": "boats:paper_boat", "type": "shapeless", "ingredients": ["minecraft:paper", "minecraft:paper", "minecraft:paper"], "result": "boats:paper_boat", "craft_tab": "minecraft:transport"},
+  {"key": "boats:jungle_raft", "type": "shapeless", "ingredients": ["minecraft:vine", "minecraft:stick", "minecraft:stick"], "result": "boats:jungle_raft", "craft_tab": "minecraft:transport"}
+ ],
+ "lang": {
+  "en_US": {"boats:redwood_boat": "Redwood Boat", "boats:paper_boat": "Paper Boat", "boats:jungle_raft": "Jungle Raft"}
+ }
+}

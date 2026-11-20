@@ -1,0 +1,591 @@
+diff -ruN a/ps4-metadata-snapshot/crashlog-build/build-crashlog.sh b/ps4-metadata-snapshot/crashlog-build/build-crashlog.sh
+--- ps4-metadata-snapshot/crashlog-build/build-crashlog.sh	2026-11-19 08:25:28.294842856 +0000
++++ ps4-metadata-snapshot/crashlog-build/build-crashlog.sh	2026-11-19 08:25:28.341779805 +0000
+@@ -132,6 +132,31 @@
+  grep -qF -- "$pattern" <<<"$nav_dis" || { echo "tabs_29.o Navigation layout changed (pattern $pattern); update debug_all.hpp kNav* offsets" >&2; exit 1; }
+ done
+ objcopy --add-symbol lce_body_submit_sheep=.text._ZN11tab_actions10Dispatcher12submit_sheepEjj:0,function,global --add-symbol lce_body_submit_animal_variant=.text._ZN11tab_actions10Dispatcher21submit_animal_variantEjj:0,function,global --add-symbol lce_body_available_sheep=.text._ZNK11tab_actions10Dispatcher15available_sheepEjj:0,function,global --add-symbol lce_body_available_animal_variant=.text._ZNK11tab_actions10Dispatcher24available_animal_variantEjj:0,function,global --redefine-sym _ZN11tab_actions10Dispatcher12submit_sheepEjj=lce_hook_submit_sheep --redefine-sym _ZN11tab_actions10Dispatcher21submit_animal_variantEjj=lce_hook_submit_animal_variant --redefine-sym _ZNK11tab_actions10Dispatcher15available_sheepEjj=lce_hook_available_sheep --redefine-sym _ZNK11tab_actions10Dispatcher24available_animal_variantEjj=lce_hook_available_animal_variant --add-symbol lce_body_available=.text._ZNK11tab_actions10Dispatcher9availableEjj:0,function,global --add-symbol lce_body_submit=.text._ZN11tab_actions10Dispatcher6submitEjj:0,function,global --redefine-sym _ZNK11tab_actions10Dispatcher9availableEjj=lce_hook_available --redefine-sym _ZN11tab_actions10Dispatcher6submitEjj=lce_hook_submit --add-symbol lce_body_submit_item_quantity=.text._ZN11tab_actions10Dispatcher20submit_item_quantityEjjj:0,function,global --add-symbol lce_body_submit_mob=.text._ZN11tab_actions10Dispatcher10submit_mobEjj:0,function,global --redefine-sym _ZN11tab_actions10Dispatcher20submit_item_quantityEjjj=lce_hook_submit_item_quantity --redefine-sym _ZN11tab_actions10Dispatcher10submit_mobEjj=lce_hook_submit_mob --add-symbol lce_body_available_mob=.text._ZNK11tab_actions10Dispatcher13available_mobEjj:0,function,global --redefine-sym _ZNK11tab_actions10Dispatcher13available_mobEjj=lce_hook_available_mob --add-symbol lce_body_available_item_quantity=.text._ZNK11tab_actions10Dispatcher23available_item_quantityEjjj:0,function,global --redefine-sym _ZNK11tab_actions10Dispatcher23available_item_quantityEjjj=lce_hook_available_item_quantity $crash/build/tabs29_catalog.obj $crash/build/tabs_29.o
+-ld.lld --wrap=mc195_verify_pristine_rx --wrap=mods195_category_status --wrap=mods195_category_count --wrap=mods195_category_wrapper --wrap=lce_sdk_boot --wrap=mc195_craft_select_embedded --wrap=mc195_craft_filter_decide --wrap=steel195_creative_hook_start --wrap=steel195_craft_hook_start --wrap=steel195_resource_hooks_start --wrap=steel195_retirement_hook_start --wrap=mc195_ore_probe_hook_start --wrap=mc195_lucky_hook_start --wrap=mc195_steel_ore_prepare --wrap=steel195_ore_block_hook_start --wrap=mc195_craft_candidate_start --wrap=mc195_lucky_prepare --wrap=mc195_terrain_install --wrap=mc195_giant_texture_install --wrap=mc195_rainbow_install --wrap=mc195_lucky_chat_colour_install --wrap=mods195_private_movie_start --wrap=mods195_nav_start --wrap=mc195_custom_startup_prepare --wrap=mc195_lucky_native_prepare --wrap=_ZN9tab_modal10Navigation4pollEv --wrap=mc195_mods_pad_sample_data --wrap=_Z13mc195_f3_bindP21mc195_natural_process --wrap=_ZN9tab_modal10Navigation5beginEiiiihhPNS_5FrameE --wrap=_ZN9tab_modal10Navigation10invalidateEv --wrap=_ZN11menu_render16NuklearPresenter5startERN9tab_modal10NavigationERKNS_11DirectLeaseEiiiihhPNS_13DirectFrameIdE --wrap=lce_remote_inbound_frame --wrap=lce_remote_pump --wrap=lce_plugin_update_tick --wrap=_ZN12mc195_f3_hud9availableEjb --wrap=_ZN12mc195_f3_hud7enabledEj --wrap=_ZN12mc195_f3_hud5stateEj --wrap=_ZN12mc195_f3_hud6toggleEjb --wrap=_ZN12mc195_f3_hud4tickEj --wrap=_ZN12mc195_f3_hud6renderEjRN11menu_render16PostUiCompositorEPv --wrap=_ZN12mc195_f3_hud10invalidateEj -m elf_x86_64 -pie --wrap=mc195_gre_set_skin_enabled --wrap=mc195_selection_worker_startup_choice --wrap=_ZN9tab_modal10Navigation5inputEiNS_3KeyEbb --wrap=mc195_debug_action_available --wrap=_ZN10mc195_mods5Model4openEv --wrap=_ZN10mc195_mods5Model7refreshEv --wrap=_ZN10mc195_mods5Model5inputEN9tab_modal3KeyEb --wrap=_ZN10mc195_mods5Model4drawERKN11menu_render10DirectSinkEiiiihh --wrap=_ZN9tab_modal10Navigation30configure_visual_world_actionsERKN11tab_actions14WeatherBackendE --version-script "$debug/exports.map" --script "$tc/link.x" -e _init --eh-frame-hdr -L "$tc/lib" $crash/build/crtprx.o $crash/build/super.o $crash/build/frontend_diagnostics.o $crash/build/frontend_crash_logger.o $crash/build/debug_main.o $crash/build/native_pad.o $crash/build/weather.o $crash/build/runtime.o $crash/build/action_trace.o $crash/build/runtime_attest.o $crash/build/shared_tick_195.o $crash/build/dialog_gate_195.o $crash/build/title_detour.o $crash/build/ps4_attest.o $crash/build/store_bridge.o $crash/build/probe.o $crash/build/menu_action.o $crash/build/menu_label.o $crash/build/title_branch.o $crash/build/title_thunk.o $crash/build/offline_observe.o $crash/build/offline_observe_asm.o $crash/build/offline_once_component.o $crash/build/offline_prearm.o $crash/build/offline_repeat.o $crash/build/trace.o $crash/build/registry_component.o $crash/build/trace_*.o $crash/build/store_route.o $crash/build/label_adapter.o $crash/build/catalog_bridge.o $crash/build/catalog_builtin.o $crash/build/catalog_snapshot.o $crash/build/catalog.o $crash/build/selection_selection.o $crash/build/selection_store.o $crash/build/selection_worker.o $crash/build/local_store_ps4.o $crash/build/manifest.o $crash/build/legacy_*.o $crash/build/steel_*.o $crash/build/process_*.o $crash/build/creative_*.o $crash/build/content_*.o $crash/build/gre_*.o $crash/build/sha.o $crash/build/map_save_service.o $crash/build/compat.o $crash/build/tabs_*.o $crash/build/nbt_lifecycle_*.o $crash/build/tools_*.o $crash/build/lucky_*.o $crash/build/shared_terrain_*.o $crash/build/craft_provider/modded-crafting-candidate.o $crash/build/lce_*.o --start-group $crash/build/tabs_libopengnm.a -lc -lkernel -lSceNet -lSceGnmDriver -lSceVideoOut -lSceImeDialog -lSceSaveData -lSceUserService -lSceLibcInternal --end-group -o $crash/build/super195.elf
++# LCE mod loader SDK (modloader-sdk/integration/shipping-plugin.patch, INTEGRATION.md).
++# 1. Rebuild the r72 translation units this patch changes, with the flags above.
++#    The prebuilt objects are kept once as *.pre-sdk.keep (rollback: copy them back).
++lcesdk=/home/codey/minecraft-lce-work/modloader-sdk
++s195="$root/loader/super_content_steel_nbt_save_195"
++for o in super trace tools_runtime process_resource content_process content_craft_hook craft_provider/integration_provider_capture craft_provider/modded-crafting-candidate; do
++ [ -f "$crash/build/$o.o.pre-sdk.keep" ] || cp "$crash/build/$o.o" "$crash/build/$o.o.pre-sdk.keep"
++done
++clang++ "${flags[@]}" "${cxx[@]}" -c "$s195/super.cpp" -o "$crash/build/super.o"
++[ -f "$crash/build/nbt_lifecycle_shared_scope_mux.o.pre-scope8.keep" ] || cp "$crash/build/nbt_lifecycle_shared_scope_mux.o" "$crash/build/nbt_lifecycle_shared_scope_mux.o.pre-scope8.keep"
++clang++ "${flags[@]}" "${cxx[@]}" -fexceptions -c "$root/loader/shared_server_scope_195/mux.cpp" -o "$crash/build/nbt_lifecycle_shared_scope_mux.o"   # shared scope capacity 8 (room for the LCE SDK)
++clang++ "${flags[@]}" "${cxx[@]}" -I"$root/loader/steel_startup_trace_195" -DSTEEL_TRACE_COMPONENT -c "$s195/registry_trace.cpp" -o "$crash/build/trace.o"
++clang++ "${flags[@]}" "${cxx[@]}" -I"$root/compatibility/ruby/vendor/lua-5.4.8/src" -c "$s195/tools_runtime.cpp" -o "$crash/build/tools_runtime.o"
++clang++ "${flags[@]}" "${cxx[@]}" -I"$root/compatibility/ruby/vendor/lua-5.4.8/src" -Dsteel195_resource_grow=mc195_items_resource_grow -c "$s195/resource.cpp" -o "$crash/build/process_resource.o"
++clang++ "${flags[@]}" "${cxx[@]}" -c "$s195/content_process.cpp" -o "$crash/build/content_process.o"
++clang++ "${flags[@]}" "${cxx[@]}" -c "$root/loader/steel_process_content_195/craft_hook.cpp" -o "$crash/build/content_craft_hook.o"
++clang++ "${flags[@]}" "${cxx[@]}" -I/home/codey/minecraft-ps4-research/loader/modded_crafting_tabs_195/work-r20 -c "$root/loader/additive_recipes_195/craft_ui_capture.cpp" -o "$crash/build/craft_provider/integration_provider_capture.o"
++craft_objs=(); for o in "$crash"/build/craft_provider/*.o; do [ "${o##*/}" = modded-crafting-candidate.o ] || craft_objs+=("$o"); done
++ld.lld -r "${craft_objs[@]}" -o "$crash/build/craft_provider/modded-crafting-candidate.o"
++# Terrain atlas owner with SDK block tiles (gap G1): shared_terrain_195/runtime.cpp built with its own build.sh flags
++# (Steel mode, -Os, no ABI overlay); the unpatched source reproduces the prebuilt object byte for byte (md5 84d1a800...).
++[ -f "$crash/build/shared_terrain_runtime.o.pre-sdk.keep" ] || cp "$crash/build/shared_terrain_runtime.o" "$crash/build/shared_terrain_runtime.o.pre-sdk.keep"
++clang++ --target=x86_64-pc-freebsd12-elf -Os -fPIC -mstackrealign -ffreestanding -fno-stack-protector -fno-builtin -Wall -Wextra -Werror -Wno-unused-function -isysroot "$tc" -isystem "$tc/include" -std=c++17 -fno-exceptions -fno-rtti -c "$root/loader/shared_terrain_195/runtime.cpp" -o "$crash/build/shared_terrain_runtime.o"
++# 2. Build the SDK (core, composite retail195 backend, modules, Lua, netsync) as one object.
++"$lcesdk/build-ps4.sh" >/dev/null
++ld.lld --wrap=mc195_verify_pristine_rx --wrap=mods195_category_status --wrap=mods195_category_count --wrap=mods195_category_wrapper --wrap=lce_sdk_boot --wrap=mc195_craft_select_embedded --wrap=mc195_craft_filter_decide --wrap=steel195_creative_hook_start --wrap=steel195_craft_hook_start --wrap=steel195_resource_hooks_start --wrap=steel195_retirement_hook_start --wrap=mc195_ore_probe_hook_start --wrap=mc195_lucky_hook_start --wrap=mc195_steel_ore_prepare --wrap=steel195_ore_block_hook_start --wrap=mc195_craft_candidate_start --wrap=mc195_lucky_prepare --wrap=mc195_terrain_install --wrap=mc195_giant_texture_install --wrap=mc195_rainbow_install --wrap=mc195_lucky_chat_colour_install --wrap=mods195_private_movie_start --wrap=mods195_nav_start --wrap=mc195_custom_startup_prepare --wrap=mc195_lucky_native_prepare --wrap=_ZN9tab_modal10Navigation4pollEv --wrap=mc195_mods_pad_sample_data --wrap=_Z13mc195_f3_bindP21mc195_natural_process --wrap=_ZN9tab_modal10Navigation5beginEiiiihhPNS_5FrameE --wrap=_ZN9tab_modal10Navigation10invalidateEv --wrap=_ZN11menu_render16NuklearPresenter5startERN9tab_modal10NavigationERKNS_11DirectLeaseEiiiihhPNS_13DirectFrameIdE --wrap=lce_remote_inbound_frame --wrap=lce_remote_pump --wrap=lce_plugin_update_tick --wrap=_ZN12mc195_f3_hud9availableEjb --wrap=_ZN12mc195_f3_hud7enabledEj --wrap=_ZN12mc195_f3_hud5stateEj --wrap=_ZN12mc195_f3_hud6toggleEjb --wrap=_ZN12mc195_f3_hud4tickEj --wrap=_ZN12mc195_f3_hud6renderEjRN11menu_render16PostUiCompositorEPv --wrap=_ZN12mc195_f3_hud10invalidateEj -m elf_x86_64 -pie --wrap=mc195_gre_set_skin_enabled --wrap=mc195_selection_worker_startup_choice --wrap=_ZN9tab_modal10Navigation5inputEiNS_3KeyEbb --wrap=mc195_debug_action_available --wrap=_ZN10mc195_mods5Model4openEv --wrap=_ZN10mc195_mods5Model7refreshEv --wrap=_ZN10mc195_mods5Model5inputEN9tab_modal3KeyEb --wrap=_ZN10mc195_mods5Model4drawERKN11menu_render10DirectSinkEiiiihh --wrap=_ZN9tab_modal10Navigation30configure_visual_world_actionsERKN11tab_actions14WeatherBackendE --version-script "$debug/exports.map" --script "$tc/link.x" -e _init --eh-frame-hdr -L "$tc/lib" $crash/build/crtprx.o $crash/build/super.o $crash/build/frontend_diagnostics.o $crash/build/frontend_crash_logger.o $crash/build/debug_main.o $crash/build/native_pad.o $crash/build/weather.o $crash/build/runtime.o $crash/build/action_trace.o $crash/build/runtime_attest.o $crash/build/shared_tick_195.o $crash/build/dialog_gate_195.o $crash/build/title_detour.o $crash/build/ps4_attest.o $crash/build/store_bridge.o $crash/build/probe.o $crash/build/menu_action.o $crash/build/menu_label.o $crash/build/title_branch.o $crash/build/title_thunk.o $crash/build/offline_observe.o $crash/build/offline_observe_asm.o $crash/build/offline_once_component.o $crash/build/offline_prearm.o $crash/build/offline_repeat.o $crash/build/trace.o $crash/build/registry_component.o $crash/build/trace_*.o $crash/build/store_route.o $crash/build/label_adapter.o $crash/build/catalog_bridge.o $crash/build/catalog_builtin.o $crash/build/catalog_snapshot.o $crash/build/catalog.o $crash/build/selection_selection.o $crash/build/selection_store.o $crash/build/selection_worker.o $crash/build/local_store_ps4.o $crash/build/manifest.o $crash/build/legacy_*.o $crash/build/steel_*.o $crash/build/process_*.o $crash/build/creative_*.o $crash/build/content_*.o $crash/build/gre_*.o $crash/build/sha.o $crash/build/map_save_service.o $crash/build/compat.o $crash/build/tabs_*.o $crash/build/nbt_lifecycle_*.o $crash/build/tools_*.o $crash/build/lucky_*.o $crash/build/shared_terrain_*.o $crash/build/craft_provider/modded-crafting-candidate.o $crash/build/lce_*.o "$lcesdk/build/ps4/lcemodloader.o" --start-group $crash/build/tabs_libopengnm.a -lc -lkernel -lSceNet -lSceGnmDriver -lSceVideoOut -lSceImeDialog -lSceSaveData -lSceUserService -lSceLibcInternal --end-group -o $crash/build/super195.elf
+ OO_PS4_TOOLCHAIN="$tc" "$tc/bin/linux/create-fself" -in=$crash/build/super195.elf -out=$crash/build/super195.oelf --lib=$crash/build/super195.prx --paid 0x3800000000000011
+ sha256sum $crash/build/super195.prx
+diff -ruN a/ps4-transport/native_bridge.c b/ps4-transport/native_bridge.c
+--- ps4-transport/native_bridge.c	2026-11-19 08:25:28.299034836 +0000
++++ ps4-transport/native_bridge.c	2026-11-19 08:25:28.342852713 +0000
+@@ -3,9 +3,13 @@
+ /* Optional plugin hook (weak: absent in the host tests). Returns nonzero when it
+    consumed a server->plugin control frame that must not reach the retail client. */
+ extern int lce_remote_inbound_frame(const uint8_t *,size_t) __attribute__((weak));
++/* netsync195 (weak): consumes [250]["LCE|ModIds"] frames. Runs here, with the
++   bridge lock held, so it only posts; the HELLO is sent from lce_netsync_pump. */
++extern int lce_netsync_inbound_frame(const uint8_t *,size_t) __attribute__((weak));
+ static int receive_frame(void *context,const uint8_t *data,size_t n) {
+     lce_native_bridge *b=context;
+     if (!b->attached || !b->socket || !n || n>UINT32_MAX) return 0;
++    if (lce_netsync_inbound_frame && lce_netsync_inbound_frame(data,n)) return 1;
+     if (lce_remote_inbound_frame && lce_remote_inbound_frame(data,n)) return 1;
+     b->ops.push(b->socket,data,(uint32_t)n,1);
+     return 1;
+diff -ruN a/ps4-transport/session_runtime.cpp b/ps4-transport/session_runtime.cpp
+--- ps4-transport/session_runtime.cpp	2026-11-19 08:25:28.303989282 +0000
++++ ps4-transport/session_runtime.cpp	2026-11-19 08:25:28.344053990 +0000
+@@ -7,6 +7,13 @@
+ // standard placement allocation primitive locally for process-lifetime Install.
+ inline void *operator new(size_t,void *storage) noexcept { return storage; }
+ 
++/* netsync195 (weak): sends the LCE|ModIds HELLO once the server asked for it.
++   Called on the UI/game thread, outside the bridge lock. */
++extern "C" void lce_netsync_pump(int active,int (*send)(void *,const uint8_t *,size_t),void *ctx) __attribute__((weak));
++static int netsync_send(void *ctx,const uint8_t *packet,size_t size) {
++    return static_cast<lce_session_coordinator::Coordinator *>(ctx)->send_game_packet(packet,size) ? 1 : 0;
++}
++
+ namespace lce_session_runtime {
+ 
+ bool Runtime::reject(Error e) { error_=e; return false; }
+@@ -108,6 +115,8 @@
+ bool Runtime::run_ui_task(bool owned_game_tick) {
+     if (!owned_game_tick) return false;
+     const bool ran=scheduler_.run_ui_task();
++    if (lce_netsync_pump)
++        lce_netsync_pump(coordinator_.phase()==lce_session_coordinator::Phase::Active,netsync_send,&coordinator_);
+     if (coordinator_.phase()==lce_session_coordinator::Phase::CleanupPending)
+         (void)coordinator_.retry_cleanup();
+     return ran;
+diff -ruN a/r72-session-candidate/loader/additive_recipes_195/craft_ui_capture.cpp b/r72-session-candidate/loader/additive_recipes_195/craft_ui_capture.cpp
+--- r72-session-candidate/loader/additive_recipes_195/craft_ui_capture.cpp	2026-11-19 08:25:28.308150768 +0000
++++ r72-session-candidate/loader/additive_recipes_195/craft_ui_capture.cpp	2026-11-19 08:25:28.345197603 +0000
+@@ -1,9 +1,11 @@
+ #include "shaped.h"
+ #include "registry.h" /* pinned native Mods crafting registry ABI */
++/* LCE SDK (modules/items195): r72 snapshot + the ABI-2 publisher's recipes, never partial. */
++extern "C" unsigned lce195x_recipe_snapshot_all(uintptr_t owner,uintptr_t *recipes,unsigned *categories,unsigned capacity);
+ extern "C" int mc195_craft_capture_providers(mc195_mod_registry *r,uintptr_t owner){
+  if(!r||!owner||r->sealed||r->count)return 0;
+  uintptr_t recipes[MC195_MOD_RECIPE_CAPACITY]={};unsigned categories[MC195_MOD_RECIPE_CAPACITY]={};
+- unsigned count=lce195_recipe_snapshot(owner,recipes,categories,MC195_MOD_RECIPE_CAPACITY);
++ unsigned count=lce195x_recipe_snapshot_all(owner,recipes,categories,MC195_MOD_RECIPE_CAPACITY);
+  if(!count||count>MC195_MOD_RECIPE_CAPACITY)return 0;
+  for(unsigned i=0;i<count;i++)if(!mc195_mod_register(r,recipes[i],categories[i])){r->count=0;return 0;}
+  if(!mc195_mod_seal(r)){r->count=0;return 0;}return 1;
+diff -ruN a/r72-session-candidate/loader/shared_terrain_195/runtime.cpp b/r72-session-candidate/loader/shared_terrain_195/runtime.cpp
+--- r72-session-candidate/loader/shared_terrain_195/runtime.cpp	2026-11-19 08:25:28.311925637 +0000
++++ r72-session-candidate/loader/shared_terrain_195/runtime.cpp	2026-11-19 08:25:28.346552271 +0000
+@@ -11,6 +11,16 @@
+ #include "../steel_ore_native_provider_195/provider.h"
+ #include "../additive_block_names_195/names.h"
+ #include "../../visual-ui/weather_menu/runtime.h"
++/* LCE mod loader SDK (gap G1): SDK block faces are appended to the terrain
++ * atlas after the two fixed Lucky/Steel tiles (cells 2..). Weak references:
++ * without the SDK (or with no SDK block texture) they are null or report zero
++ * tiles, and every path below is the two-owner runtime unchanged. The SDK
++ * binds its own sprites (blocks195 b195_terrain_bind) inside this lease and
++ * gets this runtime's held/uploaded attestations as callbacks. */
++extern "C" uint32_t lce_sdk_terrain_tiles(void) __attribute__((weak));
++extern "C" int lce_sdk_terrain_compose(uint32_t,unsigned,uint8_t *,size_t) __attribute__((weak));
++extern "C" int lce_sdk_terrain_bind(uintptr_t,uint32_t,uint32_t,uint32_t,uint32_t,uint32_t,uint32_t,int (*)(void),int (*)(uintptr_t,uintptr_t,uint32_t)) __attribute__((weak));
++extern "C" int lce_sdk_terrain_detach(int (*)(void)) __attribute__((weak));
+ static const unsigned char steel_tile[1024]={
+ #include "steel_tile.inc"
+ };
+@@ -35,6 +45,9 @@
+  __atomic_store_n(&observed_image,image.state,__ATOMIC_RELEASE);
+ }
+ static unsigned char tiles0[2*256*256*4],tiles1[2*128*128*4],tiles2[2*64*64*4];
++/* SDK tiles in the current generation (0 = two-owner layout). They share the
++ * fixed tile buffers: (2+n)*size*size*4 must fit tiles0 (n <= 62 at 16 px). */
++static unsigned sdk_tiles;
+ static uintptr_t original_full,original_simple,original_destroy,original_delete;
+ extern "C" int mc195_terrain_growth_relay_installed(void);
+ static int checked(uintptr_t p,size_t n,int prot){void *lo=nullptr,*hi=nullptr;int32_t actual=0;return p&&n&&p<=UINTPTR_MAX-n&&!sceKernelQueryMemoryProtection((void*)p,&lo,&hi,&actual)&&(actual&prot)==prot&&(uintptr_t)lo<=p&&(uintptr_t)hi>=p+n;}
+@@ -106,9 +119,22 @@
+  return 0;
+ }
+ static int uploaded(void*,uintptr_t atlas,uintptr_t tex,uint32_t generation,const lce195_terrain_layout *layout){return lce195_terrain_reload_uploaded(&reload,atlas,tex,generation,layout);}
+-static int detach(void*){for(unsigned i=0;i<2;i++)if(owners[i].bound_slot&&lce195_terrain_detach(&owners[i])!=1)return 0;return 1;}
+-static int assets(void*,const lce195_terrain_layout *l,const uintptr_t *p,const size_t *n){return held(nullptr)&&l&&l->count==2&&l->width==l->tile_size*16&&l->stock_height==l->tile_size*39&&p[0]==(uintptr_t)tiles0&&p[1]==(uintptr_t)tiles1&&p[2]==(uintptr_t)tiles2&&n[0]==size_t(l->tile_size)*l->tile_size*8&&n[1]==n[0]/4&&n[2]==n[0]/16;}
+-static void make_tiles(unsigned size){unsigned char *dst[3]={tiles0,tiles1,tiles2};const unsigned char *src[2]={lucky195_terrain_rgba,steel_tile};for(unsigned m=0;m<3;m++){unsigned side=size>>m;for(unsigned k=0;k<2;k++)for(unsigned y=0;y<side;y++)for(unsigned x=0;x<side;x++){unsigned sx=x*16/side,sy=y*16/side;for(unsigned c=0;c<4;c++)dst[m][((size_t)k*side*side+y*side+x)*4+c]=src[k][(sy*16+sx)*4+c];}}}
++static int sdk_held(void){return held(nullptr);}
++static int sdk_uploaded(uintptr_t atlas,uintptr_t tex,uint32_t generation){return lce195_terrain_reload_uploaded(&reload,atlas,tex,generation,&image.layout);}
++static int detach(void*){for(unsigned i=0;i<2;i++)if(owners[i].bound_slot&&lce195_terrain_detach(&owners[i])!=1)return 0;
++ /* 1 when nothing is bound; a foreign or uncertain sprite fails the reload. */
++ if(lce_sdk_terrain_detach&&lce_sdk_terrain_detach(sdk_held)!=1)return 0;return 1;}
++static int assets(void*,const lce195_terrain_layout *l,const uintptr_t *p,const size_t *n){return held(nullptr)&&l&&l->count==2+sdk_tiles&&l->width==l->tile_size*16&&l->stock_height==l->tile_size*39&&p[0]==(uintptr_t)tiles0&&p[1]==(uintptr_t)tiles1&&p[2]==(uintptr_t)tiles2&&n[0]==size_t(l->tile_size)*l->tile_size*4*l->count&&n[1]==n[0]/4&&n[2]==n[0]/16;}
++static unsigned sdk_fit(unsigned size){
++ if(!lce_sdk_terrain_tiles||!lce_sdk_terrain_compose||!lce_sdk_terrain_bind||!lce_sdk_terrain_detach)return 0;
++ uint32_t n=lce_sdk_terrain_tiles();
++ if(!n||n>LCE195_TERRAIN_TILES_MAX-2u||(size_t)(2u+n)*size*size*4u>sizeof tiles0)return 0;
++ return n;
++}
++static void make_tiles(unsigned size){unsigned char *dst[3]={tiles0,tiles1,tiles2};const unsigned char *src[2]={lucky195_terrain_rgba,steel_tile};for(unsigned m=0;m<3;m++){unsigned side=size>>m;for(unsigned k=0;k<2;k++)for(unsigned y=0;y<side;y++)for(unsigned x=0;x<side;x++){unsigned sx=x*16/side,sy=y*16/side;for(unsigned c=0;c<4;c++)dst[m][((size_t)k*side*side+y*side+x)*4+c]=src[k][(sy*16+sx)*4+c];}}
++ /* SDK tiles after the fixed two; a refused compose drops them for this generation. */
++ for(unsigned m=0;sdk_tiles&&m<3;m++){size_t one=(size_t)(size>>m)*(size>>m)*4;if(lce_sdk_terrain_compose(size,m,dst[m]+2*one,one*sdk_tiles)!=1)sdk_tiles=0;}
++}
+ extern "C" uintptr_t mc195_terrain_grow(uintptr_t source,uintptr_t atlas){
+  if(!__atomic_load_n(&active,__ATOMIC_ACQUIRE)||reload.stage!=1||reload.atlas!=atlas||!held(nullptr)||!source)return source;
+  uint32_t dims[2]={};if(!rd(nullptr,source+0x50,dims,8)){fail_reason(10);return source;}
+@@ -116,9 +142,10 @@
+  if(dims[0]%16||dims[1]*16u!=dims[0]*39u){fail_reason(11);return source;}
+  unsigned size=dims[0]/16;if(size<16||size>256){fail_reason(15);return source;}
+  memset(&image,0,sizeof image);image.abi=1;image.size=sizeof image;image.base=base;image.source=source;
+- if(!lce195_terrain_layout_make(dims[0],dims[1],size,2,&image.layout)){fail_reason(16);return source;}make_tiles(size);
++ sdk_tiles=sdk_fit(size);make_tiles(size);
++ if(!lce195_terrain_layout_make(dims[0],dims[1],size,2+sdk_tiles,&image.layout)){fail_reason(16);return source;}
+  image.tiles[0]=(uintptr_t)tiles0;image.tiles[1]=(uintptr_t)tiles1;image.tiles[2]=(uintptr_t)tiles2;
+- image.tile_bytes[0]=(size_t)size*size*8;image.tile_bytes[1]=image.tile_bytes[0]/4;image.tile_bytes[2]=image.tile_bytes[0]/16;image.held=held;image.read=rd;image.assets=assets;
++ image.tile_bytes[0]=(size_t)size*size*4*image.layout.count;image.tile_bytes[1]=image.tile_bytes[0]/4;image.tile_bytes[2]=image.tile_bytes[0]/16;image.held=held;image.read=rd;image.assets=assets;
+  if(lce195_terrain_image_clone(&image)!=1){fail_reason(12);sample();return source;}
+  int rc=lce195_terrain_reload_commit(&reload,&image);sample();if(rc!=1)fail_reason(13);if(image.state!=7){(void)lce195_terrain_image_dispose(&image);sample();return source;}
+  uintptr_t grown=lce195_terrain_reload_transfer(&reload);sample();if(!grown){fail_reason(14);sample();__atomic_store_n(&poisoned,1u,__ATOMIC_RELEASE);return source;}
+@@ -148,6 +175,10 @@
+   if(!i){o.destroy_dispatch=(uintptr_t)&lucky195_block_player_destroyed;o.resource_dispatch=(uintptr_t)&lucky195_block_legacy_resources;o.silk_dispatch=(uintptr_t)&lucky195_block_stock_silk;o.will_destroy_dispatch=(uintptr_t)&lucky195_block_will_destroy;}
+   if(lce195_terrain_bind_uploaded(&o,reload.atlas,reload.generation)!=1)return 0;
+  }
++ /* SDK blocks: 0 = refused before any write (blocks not published), the faces
++  * keep the stock fallback and Lucky/Steel stay bound; -1 fails the reload. */
++ if(sdk_tiles){const lce195_terrain_layout &l=image.layout;
++  if(lce_sdk_terrain_bind(reload.atlas,reload.generation,l.width,l.height,l.stock_height,l.tile_size,2u,sdk_held,sdk_uploaded)<0)return 0;}
+  return 1;
+ }
+ static void invoke_manager(uintptr_t textures,uintptr_t original,int initial=0,uintptr_t caller=0){
+diff -ruN a/r72-session-candidate/loader/steel_process_content_195/craft_hook.cpp b/r72-session-candidate/loader/steel_process_content_195/craft_hook.cpp
+--- r72-session-candidate/loader/steel_process_content_195/craft_hook.cpp	2026-11-19 08:25:28.316156774 +0000
++++ r72-session-candidate/loader/steel_process_content_195/craft_hook.cpp	2026-11-19 08:25:28.347889524 +0000
+@@ -2,6 +2,18 @@
+ #include "../../visual-ui/weather_menu/runtime.h"
+ extern "C" { __attribute__((visibility("hidden"))) uintptr_t steel195_craft_original;void steel195_craft_relay(void); }
+ static unsigned resident;
++/* W6 anticheat: the pre-cache call (0x5a9ef0) runs once per process. In SDK-only
++ * mode the relay restores the pristine word after the providers published, so
++ * eboot.bin segment 0 hashes as before the hook. Steel/Lucky modes keep it. */
++#include "/home/codey/minecraft-lce-work/modloader-sdk/loader/retail195/oneshot195.h"
++static lce195_patch_word craft_word;
++static unsigned craft_restore_result;
++extern "C" int steel195_tools_runtime_sdk_only(void);
++extern "C" void steel195_craft_hook_restore(void){
++ if(!craft_word.word_address||craft_restore_result||!steel195_tools_runtime_sdk_only())return;
++ craft_restore_result=(unsigned)(lce195_oneshot_restore(&craft_word,5,[](void *,void *p,size_t n,int prot){return sceKernelMprotect(p,n,prot);},nullptr)+1);
++}
++extern "C" unsigned steel195_craft_hook_restore_status(void){return craft_restore_result;}
+ static int protect(void *,void *p,size_t n,int prot){return sceKernelMprotect(p,n,prot);}
+ static int read_code(uintptr_t a,unsigned char *out){void *lo=nullptr,*hi=nullptr;int32_t prot=0;return a<=UINTPTR_MAX-16&&!sceKernelQueryMemoryProtection((void *)a,&lo,&hi,&prot)&&(prot&5)==5&&(uintptr_t)lo<=a&&(uintptr_t)hi>=a+16&&(memcpy(out,(void *)a,16),1);}
+ extern "C" int steel195_craft_hook_start(uintptr_t b){
+@@ -18,6 +30,8 @@
+  }
+  if(!page)return 0;mc195_call_plan fresh={};
+  if(!read_code(b+0x5a9ef0,w)||!steel195_craft_plan(b,w,16,(uintptr_t)page,0x4000,&fresh)||memcmp(&fresh,&plan,sizeof fresh)){sceKernelMunmap(page,0x4000);return 0;}
++ craft_word=lce195_patch_word{plan.word_address,plan.expected_word,plan.replacement_word};
+  mc195_publish_result r=mc195_publish_call(&plan,(uintptr_t)page,(uintptr_t)&steel195_craft_relay,&steel195_craft_original,5,protect,nullptr);
++ if(r!=MC195_PUBLISH_INSTALLED)craft_word=lce195_patch_word{0,0,0};
+  if(r==MC195_PUBLISH_INSTALLED)return 1;if(r==MC195_PUBLISH_REJECTED){sceKernelMunmap(page,0x4000);return 0;}return -1;
+ }
+diff -ruN a/r72-session-candidate/loader/super_content_steel_nbt_save_195/content_process.cpp b/r72-session-candidate/loader/super_content_steel_nbt_save_195/content_process.cpp
+--- r72-session-candidate/loader/super_content_steel_nbt_save_195/content_process.cpp	2026-11-19 08:25:28.320499684 +0000
++++ r72-session-candidate/loader/super_content_steel_nbt_save_195/content_process.cpp	2026-11-19 08:25:28.349221867 +0000
+@@ -115,8 +115,14 @@
+ }
+ 
+ extern "C" void mc195_craft_scope_activate(uintptr_t,uintptr_t);
++/* LCE SDK (modules/items195): ABI-2 recipe providers (shaped, shapeless, count/aux). */
++extern "C" int lce195x_recipe_providers_publish(uintptr_t owner);
++/* W6: one-shot restore of the crafting pre-cache call word (SDK-only mode). */
++extern "C" void steel195_craft_hook_restore(void);
+ extern "C" void steel195_content_on_crafting_scoped(uintptr_t owner,uintptr_t native_return){
+  (void)lce195_recipe_providers_publish(owner);
++ (void)lce195x_recipe_providers_publish(owner);
+  /* Still in the native owner constructor, before stock cache construction. */
+  mc195_craft_scope_activate(owner,native_return);
++ steel195_craft_hook_restore();
+ }
+diff -ruN a/r72-session-candidate/loader/super_content_steel_nbt_save_195/registry_trace.cpp b/r72-session-candidate/loader/super_content_steel_nbt_save_195/registry_trace.cpp
+--- r72-session-candidate/loader/super_content_steel_nbt_save_195/registry_trace.cpp	2026-11-19 08:25:28.324885371 +0000
++++ r72-session-candidate/loader/super_content_steel_nbt_save_195/registry_trace.cpp	2026-11-19 08:25:28.350598962 +0000
+@@ -20,6 +20,20 @@
+ extern "C" bool mc195_ps4_attest(uintptr_t *);
+ #endif
+ static uintptr_t base, original[3];
++/* W1 anticheat: the items (0x477cc8) and recipes-wrapper (0x477ce8) sites run
++ * exactly once at startup. After they fired, restore the pristine call word so
++ * eboot.bin segment 0 hashes as it did before the hook (client_report.c).
++ * The atlas-seed site (0xd3d6d8) re-fires on texture reloads and stays. */
++#include "/home/codey/minecraft-lce-work/modloader-sdk/loader/retail195/oneshot195.h"
++static lce195_patch_word installed_word[3];
++static unsigned restore_result[3];
++extern "C" int steel195_tools_runtime_sdk_only(void);
++static int restore_protect(void *,void *p,size_t n,int prot){return sceKernelMprotect(p,n,prot);}
++static void restore_site(unsigned i){if(installed_word[i].word_address)restore_result[i]=(unsigned)(lce195_oneshot_restore(&installed_word[i],5,restore_protect,nullptr)+1);}
++extern "C" unsigned steel195_trace_restore_status(unsigned i){return i<3?restore_result[i]:0;}
++/* LCE SDK phase 5: BlockItems, block->item map, names, fire odds, block event
++ * routes; runs on this startup thread after the item window (no-op without SDK). */
++extern "C" int lce_sdk_after_items(void);
+ static unsigned resident, next_event;
+ static unsigned atlas_attempted,atlas_done;
+ static struct steel_atlas_sample_195 atlas_inventory;
+@@ -46,8 +60,8 @@
+  }
+  __atomic_store_n(&e->ready,1u,__ATOMIC_RELEASE);
+ }
+-static void items(){record(1,nullptr);((void (*)())__atomic_load_n(&original[0],__ATOMIC_ACQUIRE))();(void)mc195_ore_probe_after_items();(void)steel195_owner_on_items_return();int lucky_ok=!mc195_mapped_active()||mc195_lucky_on_items()==1;if(lucky_ok&&steel195_owner_status()==3)(void)steel195_tools_runtime_after_items();record(2,nullptr);steel195_registry_observer_capture();}
+-static void craft(){record(3,nullptr);((void (*)())__atomic_load_n(&original[1],__ATOMIC_ACQUIRE))();record(4,nullptr);}
++static void items(){record(1,nullptr);((void (*)())__atomic_load_n(&original[0],__ATOMIC_ACQUIRE))();(void)mc195_ore_probe_after_items();(void)steel195_owner_on_items_return();int lucky_ok=!mc195_mapped_active()||mc195_lucky_on_items()==1;if(lucky_ok&&(steel195_owner_status()==3||steel195_tools_runtime_sdk_only()))(void)steel195_tools_runtime_after_items();(void)lce_sdk_after_items();record(2,nullptr);steel195_registry_observer_capture();restore_site(0);}
++static void craft(){record(3,nullptr);((void (*)())__atomic_load_n(&original[1],__ATOMIC_ACQUIRE))();record(4,nullptr);restore_site(1);}
+ static void seed(void *atlas){
+  record(5,atlas);((void (*)(void *))__atomic_load_n(&original[2],__ATOMIC_ACQUIRE))(atlas);record(6,atlas);
+  uint32_t type=0;
+@@ -140,7 +154,9 @@
+      memcmp(&fresh,&plans[i],sizeof fresh)){
+    char line[120];snprintf(line,sizeof line,"TRACE_INSTALL site=%u reason=guard_changed installed=%u\n",i,i);logline(line);return i?-1:0;
+   }
++  installed_word[i]=lce195_patch_word{plans[i].word_address,plans[i].expected_word,plans[i].replacement_word};
+   mc195_publish_result result=mc195_publish_call(&plans[i],(uintptr_t)pages[i],hooks[i],&original[i],5,protect,nullptr);
++  if(result!=MC195_PUBLISH_INSTALLED)installed_word[i]=lce195_patch_word{0,0,0};
+   if(result!=MC195_PUBLISH_INSTALLED){
+    char line[120];snprintf(line,sizeof line,"TRACE_INSTALL site=%u result=%u installed=%u\n",i,(unsigned)result,i);logline(line);
+    return i || result==MC195_PUBLISH_RESTORE_FAILED ? -1 : 0;
+diff -ruN a/r72-session-candidate/loader/super_content_steel_nbt_save_195/resource.cpp b/r72-session-candidate/loader/super_content_steel_nbt_save_195/resource.cpp
+--- r72-session-candidate/loader/super_content_steel_nbt_save_195/resource.cpp	2026-11-19 08:25:28.329382895 +0000
++++ r72-session-candidate/loader/super_content_steel_nbt_save_195/resource.cpp	2026-11-19 08:25:28.352099414 +0000
+@@ -50,13 +50,23 @@
+   (prot&required)==required && (uintptr_t)lo<=addr && (uintptr_t)hi>=addr+n;
+ }
+ static int read_checked(void *,uintptr_t addr,void *out,size_t n){if(!out || !mapping(addr,n,1))return 0;memcpy(out,(void *)addr,n);return 1;}
++/* LCE mod loader SDK, W1b: SDK-only sessions have no Steel owner; the item atlas
++ * then belongs to the tools-runtime catalog (SDK items only), like the Lucky-alone path. */
++extern "C" int steel195_tools_runtime_sdk_only(void);
++extern "C" uintptr_t steel195_tools_runtime_sdk_base(void);
++static int sdk_alone(){return !mc195_lucky_alone()&&steel195_tools_runtime_sdk_only();}
+ static const lce195_item_catalog *item_catalog(){
+  return mc195_lucky_alone()?mc195_lucky_only_atlas_catalog(mc195_lucky_only_owner()):steel195_tools_runtime_catalog();
+ }
+ static int item_identity(){
++ if(sdk_alone())return steel195_tools_runtime_identity();
+  return mc195_lucky_alone()?mc195_lucky_only_identity(mc195_lucky_only_owner()):steel195_owner_status()==3 && steel195_tools_runtime_identity();
+ }
+ static uintptr_t resource_identity(uintptr_t a,uintptr_t b){
++ if(sdk_alone()){
++  const auto *c=item_catalog();
++  return c&&c->count&&a==c->entries[0].item&&b==c->entries[c->count>1?1:0].item?steel195_tools_runtime_sdk_base():0;
++ }
+  if(!mc195_lucky_alone())return steel195_content_resource_identity(a,b);
+  const auto *owner=mc195_lucky_only_owner();const auto *c=item_catalog();
+  return owner&&c&&c->count&&a==c->entries[0].item&&b==c->entries[c->count>1?1:0].item?owner->publisher.base:0;
+@@ -67,7 +77,7 @@
+ static int source_valid(void *,uintptr_t src){return held(nullptr) && mapping(src,0x60,1);}
+ static int begin_resource(){
+  int32_t tid=scePthreadGetthreadid();if(tid<=0)return 0;
+- if(mc195_lucky_alone()){
++ if(mc195_lucky_alone()||sdk_alone()){
+   const auto *c=item_catalog();if(!c||!c->count)return 0;
+   ingot=c->entries[0].item;pickaxe=c->entries[c->count>1?1:0].item;
+  }else if(!steel195_owner_items(&ingot,&pickaxe))return 0;
+@@ -282,7 +292,8 @@
+   }
+  }
+  const lce195_item_catalog *catalog=item_catalog();
+- if(!catalog||catalog->count<(mc195_lucky_alone()?1u:6u)||catalog->count>LCE195_ADDITIVE_CAPACITY){failed(23);return 0;}
++ /* LCE SDK: SDK-only sessions hold only SDK items (1..64), not the Steel six. */
++ if(!catalog||catalog->count<((mc195_lucky_alone()||sdk_alone())?1u:6u)||catalog->count>LCE195_ADDITIVE_CAPACITY){failed(23);return 0;}
+  item_icons.base=base;item_icons.catalog=catalog;item_icons.held=held;item_icons.ready=icons_ready;item_icons.read=read_checked;
+  ++icon_generation;
+  int rc=lce195_icons_bind_uploaded(&item_icons,texture,icon_generation,fallback);
+diff -ruN a/r72-session-candidate/loader/super_content_steel_nbt_save_195/super.cpp b/r72-session-candidate/loader/super_content_steel_nbt_save_195/super.cpp
+--- r72-session-candidate/loader/super_content_steel_nbt_save_195/super.cpp	2026-11-19 08:25:28.335605718 +0000
++++ r72-session-candidate/loader/super_content_steel_nbt_save_195/super.cpp	2026-11-19 08:25:28.353574203 +0000
+@@ -23,9 +23,11 @@
+ #include "../shared_server_scope_195/mux.hpp"
+ #include "../debug_world_difficulty_195/runtime.hpp"
+ static void mc195_f3_shared_tick(void *,const mc195_lucky_server_view *v){mc195_f3_tick(v);}
++extern "C" void lce_sdk_scope_tick(void *,const void *);
+ /* Local-world NBT editor (crashlog-build/local_nbt.cpp): player document on the native server thread. */
+ extern "C" void lce_nbt_local_scope_tick(void *,const mc195_lucky_server_view *);
+ extern "C" void lce_nbt_local_scope_failed(void *,unsigned);
++static void lce_sdk_scope_tick_shim(void *o,const mc195_lucky_server_view *v){lce_sdk_scope_tick(o,v);}
+ #include "../lucky_block_world_events_195/native_owner.h"
+ static void mc195_f3_shared_failed(void *,unsigned){mc195_f3_scope_failed();}
+ static void mc195_lucky_shared_failed(void *,unsigned){mc195_lucky_native_scope_fault();}
+@@ -110,6 +112,22 @@
+ #if defined(MC195_SUPERVISOR_TEST)
+ extern "C" bool mc195_test_message_box(void *,int32_t,uint32_t);
+ #endif
++extern "C" int lce_sdk_boot(uintptr_t,void (*)(const char *));
++extern "C" unsigned lce_sdk_status(void);
++extern "C" int lce_sdk_mods_present(void);
++extern "C" void steel195_tools_runtime_set_sdk_only(int);
++/* LCE SDK phase entry points (modloader-sdk/integration/sdk_boot.cpp). */
++extern "C" int lce_sdk_blocks_hook(void);
++extern "C" int lce_sdk_blocks_hook_waiting(void);
++extern "C" int lce_sdk_events_wanted(void);
++extern "C" int lce_sdk_terrain_wanted(void);
++extern "C" void lce_sdk_scope_tick(void *,const void *);
++extern "C" void lce_sdk_scope_finish(void *,uint64_t,uint64_t);
++extern "C" void lce_sdk_scope_failed(void *,unsigned);
++extern "C" void lce_sdk_ui_tick(void *);
++extern "C" int lce_sdk_world_entry_allowed(void);
++extern "C" void lce195x_bind_r72_snapshot(unsigned (*)(uintptr_t,uintptr_t *,unsigned *,unsigned));
++extern "C" unsigned lce195_recipe_snapshot(uintptr_t,uintptr_t *,unsigned *,unsigned);
+ /* agent-perfmods: boot timing + boot optimisations (crashlog-build/perf_boot.hpp). */
+ extern "C" void lce_perf_boot_init(void);
+ extern "C" void lce_perf_boot_hooks(uintptr_t);
+@@ -207,6 +225,9 @@
+  Guard guard;if(!guard.held)return;
+  lce_perf_title_tick();
+  struct PerfTick{uint64_t t=lce_perf_now_us();~PerfTick(){lce_perf_account(2u,t);}} perf_tick; /* LCE_PERF_SPAN_TITLE_TICK */
++ /* LCE SDK late startup (title, native UI thread, no Level): furnace, brewing,
++  * entity types/spawns/renderers, worldgen. Runs once; a no-op without SDK mods. */
++ {uint64_t t=lce_perf_now_us();lce_sdk_ui_tick(controller);lce_perf_account(1u,t);} /* LCE_PERF_SPAN_SDK_UI_TICK */
+  unsigned u=1u;
+  if(controller==(void *)(attested_base+0x143b290u))u|=2u;
+  int32_t tid=scePthreadGetthreadid();
+@@ -601,6 +622,30 @@
+  {char line[96];snprintf(line,sizeof line,"JAVA_CHOICE eligible=%x selected=%x admitted=%x\n",java_eligible,java_selected,java_admitted);logline(line);}
+  lce_perf_mark("content_binds");
+  if(java_selected)mc195_port_notices_arm();
++ // LCE mod loader SDK. Runs before steel195_tools_runtime_prepare() (which
++ // calls mc195_custom_items_prepare on its worker) and before any crafting
++ // provider registration, so the "lce-sdk" item/recipe providers are
++ // accepted. It reads /data/lce-mods, validates, persists IDs and touches no
++ // game memory. With every bundled mod off it selects the SDK-only owner (W1).
++ int sdk_armed=0,sdk_only=0;
++ /* The Mods crafting tab capture now reads r72 + ABI-2 recipes (craft_ui_capture.cpp):
++  * bind the r72 half first, with or without SDK mods. No game memory. */
++ lce195x_bind_r72_snapshot(lce195_recipe_snapshot);
++ if(lce_sdk_mods_present()){
++  lce_perf_mark("sdk_boot_begin");
++  int sdk=lce_sdk_boot(base,logline);
++  lce_perf_mark("sdk_boot_end");
++  {char line[96];snprintf(line,sizeof line,"LCE_SDK boot=%d status=%x\n",sdk,lce_sdk_status());logline(line);}
++  if(sdk<0){logline("ABORT LCE SDK provider registration uncertain; resident\n");return 0;}
++  sdk_armed=sdk==1;
++  sdk_only=sdk_armed&&!steel_enabled&&!lucky_enabled;
++  if(sdk_only)steel195_tools_runtime_set_sdk_only(1);
++  /* Block registry data hook (vptr swap on the registry object; no .text). The
++   * registry is built by the eboot's static constructor 0x150cd0; if it is not
++   * there yet the hook is retried once more before the trace hooks below. */
++  if(sdk_armed){int bh=lce_sdk_blocks_hook();char line[96];snprintf(line,sizeof line,"LCE_SDK blocks_hook=%d waiting=%d\n",bh,lce_sdk_blocks_hook_waiting());logline(line);
++   if(bh<0){logline("ABORT LCE SDK block hook uncertain; resident\n");return 0;}}
++ }
+  lce_perf_mark("sdk_phase");
+  int enabled=steel_enabled,lucky_items_ready=0;
+  if(!enabled)logline("Steel disabled or selection unavailable; Gre/UI continue\n");
+@@ -617,6 +662,11 @@
+   if(owner_ready!=1){logline("Steel owner preparation failed; Gre/UI continue\n");enabled=0;}
+   if(enabled && steel195_creative_prepare(base)!=1){logline("Steel Creative preparation failed; Gre/UI continue\n");enabled=0;}
+   if(enabled && steel195_content_prepare(base)!=1){logline("Steel content preparation failed; Gre/UI continue\n");enabled=0;}
++ }else if(sdk_only){
++  int ready=steel195_tools_runtime_prepare(base,0);
++  lucky_items_ready=ready==1&&mc195_custom_items_status()==1&&mc195_custom_items_count()>0;
++  if(ready!=1){logline("ABORT SDK item preparation incomplete or uncertain; resident\n");return 0;}
++  if(!lucky_items_ready){logline("LCE SDK item preparation refused; SDK items stay off\n");sdk_only=0;}
+  }else if(lucky_items_configured){
+   int ready=steel195_tools_runtime_prepare(base,0);
+   lucky_items_ready=ready==1&&mc195_custom_items_status()==1&&mc195_custom_items_count()>0;
+@@ -633,7 +683,7 @@
+    if(retirement<0){mc195_content_notices_fail(content_mask);logline("ABORT item atlas retirement publication uncertain; resident\n");fail_selected_ports();return 0;}
+    if(lucky_items_ready){logline("ABORT Lucky item atlas retirement unavailable; resident\n");return 0;}
+    logline("Steel retirement hook unavailable; Steel hooks disabled\n");enabled=0;
+-  }else if(lucky_items_ready&&!mc195_lucky_only_arm_items(base)){
++  }else if(lucky_items_ready&&!sdk_only&&!mc195_lucky_only_arm_items(base)){
+    logline("ABORT Lucky item publication gate unavailable; resident\n");return 0;
+   }
+  }
+@@ -642,7 +692,8 @@
+  // Give has its own value identity and opts into its reviewed paused branch.
+  lce_perf_mark("items_prepared");
+  const bool debug_authority_ready=mc195_nbt_runtime_status()==2u;
+- if(debug_authority_ready||lucky_enabled){
++ const bool sdk_events=lce_sdk_events_wanted()!=0;
++ if(debug_authority_ready||lucky_enabled||sdk_events){
+   bool prepared=false;const bool lucky_requested=lucky_enabled!=0;
+   if(lucky_enabled){
+    mc195_lucky_native_config lucky{base,nullptr,mc195_lucky_candidate_attested,mc195_lucky_candidate_read,mc195_lucky_candidate_thread,mc195_lucky_candidate_session,lucky_native_report};
+@@ -661,6 +712,9 @@
+    if(debug_authority_ready&&debug_difficulty_enabled)subscribers[count++]={nullptr,mc195_debug_difficulty_runtime_server_tick,nullptr,mc195_difficulty_shared_failed};
+    if(debug_authority_ready)subscribers[count++]={nullptr,mc195_nbt_mode_runtime_server_tick,nullptr,mc195_mode_shared_failed,true};
+    if(debug_authority_ready)subscribers[count++]={nullptr,mc195_debug_give_runtime_server_tick,nullptr,mc195_give_shared_failed,true};
++   /* LCE SDK events195: server tick, world, player join/leave, chat/commands. */
++   if(sdk_events&&count<MC195_SHARED_SCOPE_SUBSCRIBERS)subscribers[count++]={nullptr,lce_sdk_scope_tick_shim,lce_sdk_scope_finish,lce_sdk_scope_failed,false};
++   else if(sdk_events)logline("LCE_SDK events: shared scope full; SDK events disabled\n");
+    /* NBT editor in local worlds: reviewed for the paused loop (the debug menu pauses the game), like give/mode. */
+    if(debug_authority_ready&&count<MC195_SHARED_SCOPE_SUBSCRIBERS)subscribers[count++]={nullptr,lce_nbt_local_scope_tick,nullptr,lce_nbt_local_scope_failed,true};
+    int rc=mc195_shared_scope_start(&shared_server_scope,&config,subscribers,count,1);
+@@ -682,6 +736,18 @@
+  }
+  if(lucky_enabled){lucky_custom_base=base;mc195_custom_startup_config custom{base,(uintptr_t)mc195_custom_redstone_neighbor,nullptr,mc195_lucky_candidate_attested,mc195_lucky_candidate_read,mc195_lucky_candidate_thread,lucky_custom_block,lucky_custom_completed};int rc=mc195_custom_startup_prepare(&custom,1);if(rc!=1){content_state("native-lucky-blocks",MC195_CONTENT_FAILED);logline("ABORT Lucky custom BE startup relay unavailable; resident\n");return 0;}}
+  int resource_ready=0;
++ if(sdk_only){
++  /* Item atlas growth for SDK icons + Creative preparation; no terrain/mapped blocks yet. */
++  int r=steel195_resource_hooks_start(base);if(r<0){logline("ABORT resource relay publication uncertain; resident\n");return 0;}
++  if(r==1){resource_ready=1;mc195_growth_relay_mark_ready();}
++  if(r!=1||steel195_creative_prepare(base)!=1){logline("LCE SDK resource/Creative preparation unavailable; SDK items stay off\n");sdk_only=0;}
++ }
++ if(sdk_only&&resource_ready&&lce_sdk_terrain_wanted()){
++  /* LCE SDK (gap G1): SDK block faces in the terrain atlas, the same terrain owner and hooks as a Lucky/Steel session. */
++  int terrain=mc195_terrain_install(base,1,0);
++  {char line[64];snprintf(line,sizeof line,"LCE_SDK terrain install=%d\n",terrain);logline(line);}
++  if(terrain<0){logline("ABORT LCE SDK terrain publication uncertain; resident\n");return 0;}
++ }
+  if(lucky_enabled||enabled){
+   int terrain=mc195_terrain_install(base,1,0);
+   if(terrain<0){content_state("native-lucky-blocks",MC195_CONTENT_FAILED);logline("ABORT terrain publication uncertain; resident\n");return 0;}
+@@ -693,7 +759,7 @@
+   if(hook!=1){if(lucky_enabled)content_state("native-lucky-blocks",MC195_CONTENT_FAILED);logline("Mapped block initialization unavailable\n");}
+   else if(!enabled&&steel195_creative_prepare(base)!=1){content_state("native-lucky-blocks",MC195_CONTENT_FAILED);logline("ABORT Lucky Creative preparation unavailable; resident\n");return 0;}
+  }
+- int gameplay_enabled=enabled||mc195_lucky_is_active();
++ int gameplay_enabled=enabled||mc195_lucky_is_active()||sdk_only;
+  if(steel_enabled&&!enabled)content_state("steel",MC195_CONTENT_FAILED);
+  if(enabled&&!resource_ready){
+  int resource=steel195_resource_hooks_start(base);
+@@ -701,7 +767,7 @@
+  if(resource!=1){mc195_content_notices_fail(content_mask);char line[96];snprintf(line,sizeof line,"ABORT Steel resource hooks=%d; resident\n",resource);logline(line);fail_selected_ports();return 0;}
+  }
+  if(gameplay_enabled){
+- if(!steel195_content_register_crafting(enabled,mc195_lucky_is_active()?1:0)){logline("ABORT recipe provider configuration failed; resident\n");return 0;}
++ if((enabled||mc195_lucky_is_active())&&!steel195_content_register_crafting(enabled,mc195_lucky_is_active()?1:0)){logline("ABORT recipe provider configuration failed; resident\n");return 0;}
+  /* Publish the craft activation base before publishing the recipe-owner
+   * hook. Its one-shot callback can run immediately on another native thread.
+   * Runtime paths remain inert until the movie hook/ownership is available. */
+@@ -718,6 +784,8 @@
+  if(mc195_ore_probe_prepare(base))ore_probe=mc195_ore_probe_hook_start(base);
+  {char line[112];snprintf(line,sizeof line,"ORE_PROBE_ARM hook=%d phase=%u observation_only=1\n",ore_probe,mc195_ore_probe_phase());logline(line);}
+  if(ore_probe<0){mc195_content_notices_fail(content_mask);logline("ABORT diagnostic call publication uncertain; resident\n");fail_selected_ports();return 0;}
++ if(sdk_armed&&lce_sdk_blocks_hook_waiting()){int bh=lce_sdk_blocks_hook();char line[96];snprintf(line,sizeof line,"LCE_SDK blocks_hook retry=%d\n",bh);logline(line);
++  if(bh<0){logline("ABORT LCE SDK block hook uncertain; resident\n");return 0;}}
+  int trace=steel195_trace_start(base,logline);
+  if(trace<0){mc195_content_notices_fail(content_mask);logline("ABORT startup trace partial/uncertain; resident\n");fail_selected_ports();return 0;}
+  if(trace!=1){mc195_content_notices_fail(content_mask);logline("ABORT Steel startup trace unavailable; resident\n");fail_selected_ports();return 0;}
+diff -ruN a/r72-session-candidate/loader/super_content_steel_nbt_save_195/tools_runtime.cpp b/r72-session-candidate/loader/super_content_steel_nbt_save_195/tools_runtime.cpp
+--- r72-session-candidate/loader/super_content_steel_nbt_save_195/tools_runtime.cpp	2026-11-19 08:25:28.339965815 +0000
++++ r72-session-candidate/loader/super_content_steel_nbt_save_195/tools_runtime.cpp	2026-11-19 08:25:28.355365780 +0000
+@@ -13,6 +13,12 @@
+ static uintptr_t base;
+ static unsigned preparation,registration,recipe_status,creative_status,creative_tid,recipe_tid,icons,generations;
+ static int prepared_result,prepare_steel;
++/* LCE mod loader SDK, W1: run the console-proven item/Creative/atlas pipeline
++ * for the "lce-sdk" provider alone, without the Steel pair or Steel owner. */
++static int sdk_only;
++extern "C" void steel195_tools_runtime_set_sdk_only(int on){if(!__atomic_load_n(&preparation,__ATOMIC_ACQUIRE))sdk_only=on?1:0;}
++extern "C" int steel195_tools_runtime_sdk_only(void){return sdk_only;}
++static int owner_ready(void){return sdk_only||steel195_owner_status()==3;}
+ static OrbisPthread preparation_worker;
+ static lce195_items_window default_window;
+ static lce195_items_window *selected_window=&default_window;
+@@ -56,8 +62,11 @@
+  return prepared_result;
+ }
+ static int reserved(void *,const char *provider,uint32_t id,const char *key){
+- if(!provider||!key||steel195_owner_status()!=3)return 0;
++ /* SDK-only (W1b): the Steel owner is never prepared, so the reservation of
++  * non-Steel providers must not depend on it (registry=4 on the first console run). */
++ if(!provider||!key||!owner_ready())return 0;
+  if(strcmp(provider,"steel"))return mc195_custom_items_reserved(provider,id,key);
++ if(sdk_only)return 0;
+  if(id==2268)return !strcmp(key,"steelMod:steelIngot");
+  if(id==2269)return !strcmp(key,"steelMod:steelPickaxe");
+  return steel195_extra_reserved(nullptr,provider,id,key);
+@@ -68,19 +77,22 @@
+ }
+ extern "C" int steel195_tools_runtime_after_items(void){
+  unsigned zero=0;uintptr_t ingot=0,pickaxe=0;
+- if(__atomic_load_n(&preparation,__ATOMIC_ACQUIRE)!=3||steel195_owner_status()!=3||
++ if(__atomic_load_n(&preparation,__ATOMIC_ACQUIRE)!=3||!owner_ready()||
+     !__atomic_compare_exchange_n(&registration,&zero,1u,false,__ATOMIC_ACQ_REL,__ATOMIC_ACQUIRE))return 0;
+  if(mc195_mapped_active()){lce195_items_window *mapped=mc195_lucky_window();if(!mapped)return fail_registration(3,0);selected_window=mapped;}
+  else {window.read=read_mem;window.thread_id=tid;if(!lce195_items_window_enter(&window,base,1))return fail_registration(3,0);}
+- if(!steel195_owner_items(&ingot,&pickaxe))return fail_registration(3,0);
++ if(!sdk_only&&!steel195_owner_items(&ingot,&pickaxe))return fail_registration(3,0);
+  const lce195_additive_item pair[2]={
+   {1,sizeof(lce195_additive_item),"steel","steelMod:steelIngot","Steel Ingot","steel_ingot",2268,64,LCE195_MATERIAL,ingot},
+   {1,sizeof(lce195_additive_item),"steel","steelMod:steelPickaxe","Steel Pickaxe","steel_pickaxe",2269,1,LCE195_TOOL,pickaxe}};
++ int rc=1;
++ if(!sdk_only){
+  if(!lce195_catalog_add(&catalog,pair)||!lce195_catalog_add(&catalog,pair+1))return fail_registration(3,0);
+- int rc=steel195_extra_collect(&window,&catalog);
++ rc=steel195_extra_collect(&window,&catalog);
+  if(rc!=1)return fail_registration(rc<0?4u:3u,rc);
++ }
+  rc=mc195_custom_items_collect(&window,&catalog);if(rc!=1)return fail_registration(rc<0?4u:3u,rc);
+- if(catalog.count!=6+mc195_custom_items_entry_count()||!lce195_catalog_freeze(&catalog))return fail_registration(4,-1);
++ if(catalog.count!=(sdk_only?0u:6u)+mc195_custom_items_entry_count()||!lce195_catalog_freeze(&catalog))return fail_registration(4,-1);
+  /* Reject a combined Creative catalog that cannot fit before touching the
+   * native registry, rather than publish items that the tab cannot expose. */
+  if(mc195_mapped_active()&&(!mc195_lucky_mapped_count()||catalog.count+mc195_lucky_mapped_count()>LCE195_ADDITIVE_CAPACITY))return fail_registration(3,0);
+@@ -90,6 +102,10 @@
+  if(mc195_mapped_active()&&!mc195_lucky_creative_catalog(&publisher,&creative_view))return fail_registration(4,-1);
+  /* Old pair retains the already integrated name/identity owner. Use the
+   * generic name dispatcher only for four additional native subclasses. */
++ if(sdk_only){ /* SDK items carry their own private name vtables (lce195_sdk_name_dispatch) */
++  if(!lce195_items_window_leave(&window))return fail_registration(4,-1);
++  __atomic_store_n(&registration,2u,__ATOMIC_RELEASE);return 1;
++ }
+  lce195_item_vtable_spec specs[4]{};
+  for(unsigned i=0;i<4;i++)if(!lce195_catalog_add(&tool_names,catalog.entries+i+2)||!steel195_extra_name_spec(2271+i,specs+i))return fail_registration(4,-1);
+  if(!lce195_catalog_freeze(&tool_names))return fail_registration(4,-1);
+@@ -98,10 +114,15 @@
+  if(lce195_names_bind(&names,specs,4)!=1||!lce195_items_window_leave(&window))return fail_registration(4,-1);
+  __atomic_store_n(&registration,2u,__ATOMIC_RELEASE);return 1;
+ }
++/* W1b: the attested base once the SDK-only registration published (resource.cpp identity). */
++extern "C" uintptr_t steel195_tools_runtime_sdk_base(void){
++ return sdk_only&&__atomic_load_n(&registration,__ATOMIC_ACQUIRE)==2&&publisher.state==2?publisher.base:0;
++}
+ extern "C" const lce195_item_catalog *steel195_tools_runtime_catalog(void){
+  return __atomic_load_n(&registration,__ATOMIC_ACQUIRE)==2?&catalog:nullptr;
+ }
+ extern "C" int steel195_tools_runtime_identity(void){
++ if(sdk_only)return __atomic_load_n(&registration,__ATOMIC_ACQUIRE)==2&&mc195_custom_items_identity();
+  if(__atomic_load_n(&registration,__ATOMIC_ACQUIRE)!=2||names.state!=2||names.count!=4||tool_names.state!=1)return 0;
+  for(unsigned i=0;i<4;i++){
+   lce195_item_vtable_spec s{};uintptr_t actual=0,original[59]{};
+@@ -124,7 +145,7 @@
+   unsigned height=steel195_tools_runtime_atlas_height();
+   return height&&mc195_lucky_only_atlas_compose(mc195_lucky_only_owner(),stock,256u*288u*4u,out,(size_t)256u*height*4u,nullptr,icon_memory);
+  }
+- if(!steel195_tools_runtime_identity()||catalog.count!=6+mc195_custom_items_entry_count()||!stock||!out)return 0;
++ if(!steel195_tools_runtime_identity()||catalog.count!=(sdk_only?0u:6u)+mc195_custom_items_entry_count()||!stock||!out)return 0;
+  const uint8_t *tiles[LCE195_ADDITIVE_CAPACITY]{};lce195_atlas_layout layout{};
+  for(unsigned i=0;i<catalog.count;i++){
+   const steel195_asset *a=steel195_asset_find(catalog.entries[i].icon);
+@@ -133,7 +154,7 @@
+  }
+  return lce195_atlas_layout_make(&catalog,&layout)&&layout.height==steel195_tools_runtime_atlas_height()&&lce195_atlas_compose(&layout,stock,256u*288u*4u,tiles,out,(size_t)256u*layout.height*4u);
+ }
+-static int recipe_held(void *){return recipe_tid&&tid(nullptr)==recipe_tid&&steel195_tools_runtime_identity()&&steel195_owner_status()==3;}
++static int recipe_held(void *){return recipe_tid&&tid(nullptr)==recipe_tid&&steel195_tools_runtime_identity()&&owner_ready();}
+ extern "C" int steel195_tools_runtime_crafting(uintptr_t owner){
+  unsigned zero=0;
+  if(!owner||steel195_content_recipe_status()!=2||!steel195_tools_runtime_catalog()||
+@@ -142,7 +163,7 @@
+  int rc=steel195_extra_crafting(owner,&catalog,nullptr,recipe_held,read_mem,write_mem);recipe_tid=0;
+  __atomic_store_n(&recipe_status,rc==1?2u:rc<0?4u:3u,__ATOMIC_RELEASE);return rc;
+ }
+-static int creative_held(void *){return creative_tid&&tid(nullptr)==creative_tid&&steel195_tools_runtime_identity()&&steel195_owner_status()==3;}
++static int creative_held(void *){return creative_tid&&tid(nullptr)==creative_tid&&steel195_tools_runtime_identity()&&owner_ready();}
+ extern "C" int steel195_tools_runtime_creative_prepare(uintptr_t b){
+  unsigned zero=0;
+  return b==base&&__atomic_load_n(&preparation,__ATOMIC_ACQUIRE)==3&&

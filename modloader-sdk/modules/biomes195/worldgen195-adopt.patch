@@ -1,0 +1,57 @@
+--- modules/worldgen195/worldgen195.h	2026-11-18 08:54:37.088506937 +0000
++++ modules/worldgen195/worldgen195.h	2026-11-18 08:55:03.572241633 +0000
+@@ -149,6 +149,10 @@
+ int lce_wg195_publish(void);
+ int lce_wg195_restore(void);
+ void lce_wg195_snapshot(lce_wg195_status *out);
++/* biomes195 integration: accept a mod biome's private colour vtable (a chained copy of
++ * our PlainsBiome copy) in the decorate gate; resolve mod biome keys in feature biome lists. */
++int lce_wg195_adopt_vptr(uintptr_t vptr, uint8_t dimension);
++void lce_wg195_set_mod_biome_lookup(int32_t (*fn)(const char *key));
+ 
+ /* Installed into slot +0x58 of the private vtables. */
+ uintptr_t lce_wg195_decorate_dispatch(void *biome, void *level, void *random, const int32_t *pos);
+--- modules/worldgen195/worldgen195.cpp	2026-11-18 08:54:37.088461742 +0000
++++ modules/worldgen195/worldgen195.cpp	2026-11-18 08:55:03.572081342 +0000
+@@ -115,6 +115,10 @@
+     uint64_t calls, decorated, skipped, placements, writes_refused, errors;
+     uint32_t disabled;
+     char last_error[128];
++    uintptr_t adopted_vptr[32];                // biomes195 colour vtables (chained copies of ours)
++    uint8_t adopted_dim[32];
++    uint32_t adopted_count;
++    int32_t (*mod_biome_lookup)(const char *key);   // biomes195 lce_b195_lookup
+ };
+ Engine g;
+ 
+@@ -137,6 +141,9 @@
+ int dimension_of_vptr(uintptr_t vptr) {
+     for (uint32_t i = 0; i < g.class_count; ++i)
+         if (vptr == (uintptr_t)&g.classes[i].vt[2]) return lce_wg195_biome_classes[g.classes[i].cls].dimension;
++    uint32_t n = __atomic_load_n(&g.adopted_count, __ATOMIC_ACQUIRE);
++    for (uint32_t i = 0; i < n; ++i)
++        if (vptr == g.adopted_vptr[i]) return g.adopted_dim[i];
+     return -1;
+ }
+ 
+@@ -316,8 +323,19 @@
+     for (uint32_t i = 0; i < lce_wg195_biome_name_count; ++i)
+         if (!strcmp(key, lce_wg195_biome_names[i].name)) return lce_wg195_biome_names[i].id;
+     for (const Alias &a : kAliases) if (!strcmp(key, a.name)) return a.id;
+-    return -1;
++    return g.mod_biome_lookup ? g.mod_biome_lookup(key) : -1;
++}
++
++// biomes195 integration: mod biomes keep worldgen's decorate dispatch in their colour vtable.
++extern "C" int lce_wg195_adopt_vptr(uintptr_t vptr, uint8_t dimension) {
++    if (!vptr || dimension > 2 || dimension == 1) return 0;
++    uint32_t n = g.adopted_count;
++    if (n >= 32) return 0;
++    g.adopted_vptr[n] = vptr; g.adopted_dim[n] = dimension;
++    __atomic_store_n(&g.adopted_count, n + 1, __ATOMIC_RELEASE);
++    return 1;
+ }
++extern "C" void lce_wg195_set_mod_biome_lookup(int32_t (*fn)(const char *key)) { g.mod_biome_lookup = fn; }
+ 
+ extern "C" lce_status lce_wg195_from_desc(const lce_feature_desc *d, uint16_t block_id, uint8_t block_meta,
+                                           int32_t replace_id, int32_t replace_meta, lce_wg195_feature *o,

@@ -1,0 +1,154 @@
+{
+ "format": 1,
+ "id": "newretail",
+ "name": "New Retail Registries",
+ "version": "1.0.1",
+ "author": "tests",
+ "description": "The content types that used to be refused on 1.95: status effects, potions (+splash/lingering/arrows), brewing with mod potions, enchantments, a biome, custom audio, food with a mod effect.",
+ "textures": {
+  "newretail:gem": "textures/gem.png",
+  "newretail:glow_berries": "textures/glow_berries.png"
+ },
+ "items": [
+  {
+   "key": "newretail:gem",
+   "name": "Glow Gem",
+   "texture": "newretail:gem"
+  },
+  {
+   "key": "newretail:glow_berries",
+   "name": "Glow Berries",
+   "texture": "newretail:glow_berries",
+   "kind": "food",
+   "food": {
+    "hunger": 2,
+    "saturation": 0.3,
+    "effects": [
+     {
+      "effect": "newretail:glow",
+      "duration": 200
+     }
+    ]
+   }
+  }
+ ],
+ "effects": [
+  {
+   "key": "newretail:glow",
+   "name": "Glow",
+   "color": "#cd5caa",
+   "beneficial": 1,
+   "clone_of": "minecraft:regeneration"
+  },
+  {
+   "key": "newretail:swift",
+   "name": "Swiftness II",
+   "color": "#7cafc6",
+   "beneficial": 1,
+   "clone_of": "minecraft:speed"
+  },
+  {
+   "key": "newretail:calm",
+   "name": "Calm",
+   "color": "#22fe4d",
+   "beneficial": 1
+  }
+ ],
+ "potions": [
+  {
+   "key": "newretail:glow_potion",
+   "name": "Potion of Glow",
+   "effects": [
+    {
+     "effect": "newretail:glow",
+     "duration": 900
+    }
+   ],
+   "splash": 1,
+   "lingering": 1
+  },
+  {
+   "key": "newretail:strong_glow_potion",
+   "name": "Potion of Strong Glow",
+   "effects": [
+    {
+     "effect": "newretail:glow",
+     "duration": 450,
+     "amplifier": 1
+    },
+    {
+     "effect": "minecraft:speed",
+     "duration": 450
+    }
+   ]
+  }
+ ],
+ "brewing": [
+  {
+   "key": "newretail:brew_glow",
+   "input": "minecraft:awkward",
+   "reagent": "newretail:gem",
+   "output": "newretail:glow_potion"
+  },
+  {
+   "key": "newretail:brew_strong",
+   "input": "newretail:glow_potion",
+   "reagent": "minecraft:glowstone_dust",
+   "output": "newretail:strong_glow_potion"
+  }
+ ],
+ "enchantments": [
+  {
+   "key": "newretail:gem_edge",
+   "name": "Gem Edge",
+   "max_level": 5,
+   "weight": 2,
+   "applies_to": [
+    "sword",
+    "axe"
+   ],
+   "clone_of": "minecraft:sharpness"
+  },
+  {
+   "key": "newretail:soulbound",
+   "name": "Soulbound",
+   "max_level": 1,
+   "weight": 1,
+   "treasure": 1
+  }
+ ],
+ "biomes": [
+  {
+   "key": "newretail:crystal_fields",
+   "name": "Crystal Fields",
+   "temperature": 0.8,
+   "rainfall": 0.4,
+   "top_block": "minecraft:sand",
+   "filler_block": "minecraft:sandstone",
+   "grass": "#40ffd0",
+   "weight": 40
+  }
+ ],
+ "sounds": [
+  {
+   "key": "newretail:chime",
+   "file": "sounds/chime.wav",
+   "volume": 1.0,
+   "pitch": 1.0
+  }
+ ],
+ "lang": {
+  "en_US": {
+   "newretail:gem": "Glow Gem",
+   "newretail:glow_potion.splash": "Splash of Glow"
+  },
+  "de_DE": {
+   "newretail:glow": "Leuchten",
+   "newretail:gem_edge": "Edelsteinschneide",
+   "newretail:glow_potion": "Trank des Leuchtens"
+  }
+ },
+ "scripts": {
+  "main.lua": "scripts/main.lua"
+ }
+}

@@ -1,0 +1,26 @@
+{
+ "format": 1,
+ "id": "shapes",
+ "name": "Shapes (API 1.11)",
+ "version": "1.0.0",
+ "author": "tests",
+ "description": "API 1.11 multi-box blocks: ruby stairs (4 facings), a dark fence post with rails, a framed glass cross pane, and a slate slab (bottom, top, double). Pick the facing/half from the Creative variants.",
+ "textures": {
+  "shapes:ruby_bricks": {"file": "textures/ruby_bricks.png", "atlas": "terrain"},
+  "shapes:dark_planks": {"file": "textures/dark_planks.png", "atlas": "terrain"},
+  "shapes:frame_glass": {"file": "textures/frame_glass.png", "atlas": "terrain"},
+  "shapes:slate": {"file": "textures/slate.png", "atlas": "terrain"}
+ },
+ "blocks": [
+  {"key": "shapes:ruby_stairs", "name": "Ruby Stairs (North)", "texture": "shapes:ruby_bricks", "hardness": 2.0,
+   "variants": [{}, {"name": "Ruby Stairs (East)"}, {"name": "Ruby Stairs (South)"}, {"name": "Ruby Stairs (West)"}],
+   "boxes": [[0, 0, 0, 16, 8, 16], [0, 8, 8, 16, 16, 16]], "rotate_boxes": true},
+  {"key": "shapes:dark_fence", "name": "Dark Fence", "texture": "shapes:dark_planks", "material": "wood", "sound": "wood", "hardness": 2.0,
+   "boxes": [[6, 0, 6, 10, 16, 10], [0, 12, 7, 16, 15, 9], [0, 6, 7, 16, 9, 9]]},
+  {"key": "shapes:frame_pane", "name": "Framed Glass Pane", "texture": "shapes:frame_glass", "material": "glass", "sound": "glass", "hardness": 0.3, "transparent": true,
+   "boxes": [[0, 0, 7, 16, 16, 9], [7, 0, 0, 9, 16, 16]]},
+  {"key": "shapes:slate_slab", "name": "Slate Slab", "texture": "shapes:slate", "hardness": 2.0,
+   "variants": [{}, {"name": "Slate Slab (Top)"}, {"name": "Double Slate Slab"}],
+   "variant_boxes": [[[0, 0, 0, 16, 8, 16]], [[0, 8, 0, 16, 16, 16]], [[0, 0, 0, 16, 16, 16]]]}
+ ]
+}

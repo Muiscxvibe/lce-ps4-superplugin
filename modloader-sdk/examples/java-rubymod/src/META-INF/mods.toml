@@ -1,0 +1,9 @@
+modLoader="javafml"
+loaderVersion="[47,)"
+license="MIT"
+[[mods]]
+modId="rubymod"
+version="1.2.0"
+displayName="Ruby Mod"
+authors="SDK example"
+description="""Rubies: gem, block, ore, pickaxe and a ruby apple."""

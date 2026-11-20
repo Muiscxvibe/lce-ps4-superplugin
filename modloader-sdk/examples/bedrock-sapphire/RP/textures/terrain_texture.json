@@ -1,0 +1,9 @@
+{
+  "resource_pack_name": "sapphire",
+  "texture_name": "atlas.terrain",
+  "texture_data": {
+    "sapphire_block": {
+      "textures": "textures/blocks/sapphire_block"
+    }
+  }
+}

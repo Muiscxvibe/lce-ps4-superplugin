@@ -1,0 +1,4 @@
+{"format":1,"id":"orphan","name":"Orphan","version":"1.0","dependencies":{"ghostmod":"1.0"},
+ "textures":{"orphan:i_x":{"file":"../../../examples/java-rubymod/src/assets/rubymod/textures/item/ruby.png"}},
+ "items":[{"key":"orphan:x","name":"X","texture":"orphan:i_x"}],
+ "recipes":[{"key":"orphan:x","type":"shapeless","ingredients":["ghostmod:thing"],"result":"orphan:x"}]}
