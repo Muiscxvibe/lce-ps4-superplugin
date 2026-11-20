@@ -28,6 +28,7 @@
 #include "../modules/events195/ev195.h"
 #include "check.h"
 #include "fake_effects195.h"
+#include "../integration/sdk_creative_potions.h"
 #include "mock_backend.h"
 
 // ============================ fake image ===================================
@@ -627,6 +628,105 @@ static const char *text_of(uint32_t sid, const char *lang, char *buf, size_t cap
     }
     return buf;
 }
+static int creative_lease(void *context) { return *(int *)context; }
+
+static void boot_potion_only() {
+    image(); override_all();
+    g_xn.potion_by_id = fx::f_potion_by_id;
+    lce195c_test_override(LCE195C_PH_STRINGS, f_strings);
+    install("potiononly");
+    boot();
+    CHECK_EQ(lce_loader_commit(g_l), LCE_OK);
+    CHECK(mod("potiononly") && mod("potiononly")->state == LCE_MOD_LIVE);
+    CHECK_EQ(g_comp.items.item_count, 0u);
+    CHECK_EQ(g_comp.has_blocks, 0u);
+    CHECK_EQ(lce195c_creative_blocks_wanted(&g_comp), 0);
+    CHECK_EQ(lce195c_creative_potions_wanted(&g_comp), 1);
+}
+static void scenario_potion_only_creative() {
+    boot_potion_only();
+    int held = 1;
+    lce_sdk_creative_potion_entry out[2] = {};
+    auto capture = [&](unsigned capacity, unsigned rows = 6) {
+        return lce195c_creative_potion_entries(&g_comp, B, &held, creative_lease, out, capacity, rows);
+    };
+    const uintptr_t counter = fx::B + LCE195E_RVA_POTION_COUNT;
+    CHECK_EQ(capture(2), 0);                                    // before items completion
+    CHECK_EQ(lce195c_phase_after_items(&g_comp), 1);
+    CHECK_EQ(capture(1), 0);                                    // entry array too short
+    CHECK_EQ(capture(2, 5), 0);                                 // insufficient room for complete batch
+    held = 0; CHECK_EQ(capture(2), 0); held = 1;
+    g_no_level = 0; CHECK_EQ(capture(2), 0); g_no_level = 1;
+    F<uintptr_t>(B + 0x143d010u) = 1; CHECK_EQ(capture(2), 0);      // tabs already visible
+    F<uintptr_t>(B + 0x143d010u) = 0;
+    CHECK_EQ(F<int32_t>(counter), 43);
+    CHECK(!out[0].potion && !out[0].key);
+    CHECK_EQ(capture(2), 2);                                    // both distinct live records
+    CHECK(out[0].key && strcmp(out[0].key, "potiononly:first") == 0);
+    CHECK(out[1].key && strcmp(out[1].key, "potiononly:second") == 0);
+    CHECK_EQ(out[0].potion, fx::f_potion_by_id(43));
+    CHECK_EQ(out[1].potion, fx::f_potion_by_id(44));
+    CHECK_EQ(out[0].forms, 15u);
+    CHECK_EQ(out[1].forms, (uint32_t)(LCE_SDK_CREATIVE_POTION_DRINK | LCE_SDK_CREATIVE_POTION_ARROW));
+    CHECK_EQ(capture(2), 2);                                    // excludes a second publication
+    CHECK_EQ(F<int32_t>(counter), 45);
+    CHECK_EQ(lce195c_phase_late(&g_comp), 1);
+    CHECK_EQ(F<int32_t>(counter), 45);
+    CHECK_EQ(lce195c_phase_state(&g_comp, LCE195C_PH_POTIONS), (uint32_t)LCE195C_DONE);
+    CHECK_EQ(capture(2), 0);                                    // title closes Creative lease
+}
+static void scenario_potion_only_fallback() {
+    boot_potion_only();
+    CHECK_EQ(lce195c_phase_after_items(&g_comp), 1);
+    int held = 1;
+    lce_sdk_creative_potion_entry out[2] = {};
+    auto capture = [&] { return lce195c_creative_potion_entries(&g_comp, B, &held, creative_lease, out, 2, 6); };
+    const uintptr_t counter = fx::B + LCE195E_RVA_POTION_COUNT;
+    F<int32_t>(counter) = 42;                                    // native stock initialization incomplete
+    CHECK_EQ(capture(), 0);
+    CHECK_EQ(lce195c_phase_state(&g_comp, LCE195C_PH_POTIONS), (uint32_t)LCE195C_WAITING);
+    F<int32_t>(counter) = 43;
+    CHECK_EQ(capture(), 0);                                     // fallback belongs to title only
+    CHECK_EQ(F<int32_t>(counter), 43);
+    CHECK_EQ(lce195c_phase_late(&g_comp), 1);
+    CHECK_EQ(F<int32_t>(counter), 45);
+    CHECK_EQ(lce195c_phase_late(&g_comp), 1);
+    CHECK_EQ(F<int32_t>(counter), 45);
+}
+static void scenario_potion_only_uncertain() {
+    boot_potion_only();
+    CHECK_EQ(lce195c_phase_after_items(&g_comp), 1);
+    int held = 1;
+    lce_sdk_creative_potion_entry out[2] = {};
+    const uintptr_t counter = fx::B + LCE195E_RVA_POTION_COUNT;
+    fx::drop_register = 1;                                      // fail the publisher readback after first mutation
+    CHECK_EQ(lce195c_creative_potion_entries(&g_comp, B, &held, creative_lease, out, 2, 6), 0);
+    CHECK_EQ(lce195c_phase_state(&g_comp, LCE195C_PH_POTIONS), (uint32_t)LCE195C_UNCERTAIN);
+    CHECK(!out[0].potion && !out[0].key);
+    fx::drop_register = 0;
+    CHECK_EQ(lce195c_phase_late(&g_comp), -1);
+    CHECK_EQ(F<int32_t>(counter), 44);
+    CHECK(lce195e_potion_id("potiononly:first") < 0);
+}
+
+static int throw_potion_registration(void *, uintptr_t) {
+    ++F<int32_t>(fx::B + LCE195E_RVA_POTION_COUNT);
+    throw 1;
+}
+static void scenario_potion_only_unwind() {
+    boot_potion_only();
+    CHECK_EQ(lce195c_phase_after_items(&g_comp), 1);
+    lce195c_test_override(LCE195C_PH_POTIONS, throw_potion_registration);
+    int held = 1;
+    lce_sdk_creative_potion_entry out[2] = {};
+    CHECK_EQ(lce195c_creative_potion_entries(&g_comp, B, &held, creative_lease, out, 2, 6), 0);
+    CHECK_EQ(lce195c_phase_state(&g_comp, LCE195C_PH_POTIONS), (uint32_t)LCE195C_UNCERTAIN);
+    CHECK_EQ(g_comp.effect_window, 0u);
+    CHECK(!g_comp.creative_potion_held && !g_comp.creative_potion_ctx);
+    lce195c_test_override(LCE195C_PH_POTIONS, nullptr);
+    CHECK_EQ(lce195c_phase_late(&g_comp), -1);  // completes the title pass without retrying publication
+    CHECK_EQ(F<int32_t>(fx::B + LCE195E_RVA_POTION_COUNT), 44);
+}
 static void scenario_registries() {
     image(); override_all();
     g_xn.effect_by_id = fx::f_effect_by_id; g_xn.potion_by_id = fx::f_potion_by_id;   // on the console both are the retail byId
@@ -684,6 +784,11 @@ static void scenario_registries() {
     CHECK(berries != 0);
     if (berries) CHECK_EQ(Q(F<uintptr_t>(berries + 0xa8)), glow);   // MobEffectInstance -> the mod effect
     CHECK_EQ(lce195c_phase_after_items(&g_comp), 1);
+    int held = 1;
+    lce_sdk_creative_potion_entry entries[2] = {};
+    CHECK_EQ(lce195c_creative_potion_entries(&g_comp, B, &held, creative_lease, entries, 2, 8), 2);
+    CHECK_EQ(entries[0].potion, fx::f_potion_by_id(43));
+    CHECK(entries[0].key && strcmp(entries[0].key, "newretail:glow_potion") == 0);
     // late startup: strings, potions (real), enchantments, biome objects, furnace/brewing (real, mod potions), worldgen, audio
     F<uintptr_t>(B + LCE195_RVA_FURNACE_GLOBAL) = g_furnace;
     const uint32_t mixes_before = vec_len(B + LCE195X_RVA_POTION_MIXES);
@@ -1208,6 +1313,10 @@ int main(int argc, char **argv) {
     run("crafting before items -> refused", scenario_crafting_early);
     run("only refused content", scenario_allcontent_only);
     run("events/scripts unbound", scenario_no_events);
+    run("potion-only Creative capture", scenario_potion_only_creative);
+    run("potion-only clean title fallback", scenario_potion_only_fallback);
+    run("potion-only uncertain publication remains one-shot", scenario_potion_only_uncertain);
+    run("potion-only native unwind closes startup lease", scenario_potion_only_unwind);
     run("effects, potions, enchantments, biomes, custom audio", scenario_registries);
     run("Lua biome and structure world generation", scenario_lua_worldgen);
     run("shipping publisher refused the built items -> items refused", scenario_publisher_refused);

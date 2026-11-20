@@ -263,6 +263,11 @@ def wtext(w):
     return bytes(u.mem_read(p, 2 * n)).decode('utf-16le')
 check(wtext(out + 0x40) == 'gem' and wtext(out + 0x18) == 'glow_potion', 'registry getKey(potion) = gem:glow_potion (RL: path +0x18, namespace +0x40)')
 
+# Exercise the exact ItemInstance -> tagged Creative wrapper -> selection path
+# used by the plugin's existing Lucky named-stack and potion variant providers.
+from uc_creative_potions import check_creative_potions
+check_creative_potions(u, check, [(p0, 'gem:glow_potion', psids[:4]), (p1, 'gem:base', psids[6:10])])
+
 # ---- 6. refusal on the live image: id already taken / potion key already registered
 rc = lib.shim_publish_effects(1, (ctypes.c_char_p * 1)(b'gem:dupe'), (ctypes.c_int32 * 1)(70), (ctypes.c_uint32 * 1)(1),
                               (ctypes.c_int32 * 1)(0), (ctypes.c_uint32 * 1)(0), (ctypes.c_uint32 * 1)(0xffffffff),

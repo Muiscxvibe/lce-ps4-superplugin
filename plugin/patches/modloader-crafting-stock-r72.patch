@@ -1,0 +1,159 @@
+--- a/r72-session-candidate/loader/super_content_steel_nbt_save_195/registry_trace.cpp
++++ b/r72-session-candidate/loader/super_content_steel_nbt_save_195/registry_trace.cpp
+@@ -28,7 +28,6 @@
+ static lce195_patch_word installed_word[3];
+ static unsigned restore_result[3];
+ extern "C" int steel195_tools_runtime_sdk_only(void);
+-extern "C" int steel195_tools_runtime_sdk_creative_only(void);
+ static int restore_protect(void *,void *p,size_t n,int prot){return sceKernelMprotect(p,n,prot);}
+ static void restore_site(unsigned i){if(installed_word[i].word_address)restore_result[i]=(unsigned)(lce195_oneshot_restore(&installed_word[i],5,restore_protect,nullptr)+1);}
+ extern "C" unsigned steel195_trace_restore_status(unsigned i){return i<3?restore_result[i]:0;}
+@@ -140,7 +139,7 @@
+  logline("BEGIN candidate bounded trace\n");
+  if(!attested_base){logline("ABORT no attested base\n");return 0;}
+  base=attested_base;
+- const unsigned site_count=steel195_tools_runtime_sdk_creative_only()?2u:3u;
++ const unsigned site_count=steel195_tools_runtime_sdk_stock_items()?2u:3u;
+  void *pages[3]={};mc195_call_plan plans[3]={};
+  for(unsigned i=0;i<site_count;i++)if(!prepare(i,&pages[i],&plans[i])){
+   for(unsigned j=0;j<i;j++)sceKernelMunmap(pages[j],0x4000);
+--- a/r72-session-candidate/loader/super_content_steel_nbt_save_195/super.cpp
++++ b/r72-session-candidate/loader/super_content_steel_nbt_save_195/super.cpp
+@@ -672,7 +672,7 @@
+   int ready=steel195_tools_runtime_prepare(base,0);
+   lucky_items_ready=ready==1&&mc195_custom_items_status()==1&&mc195_custom_items_count()>0;
+   if(ready!=1){logline("ABORT SDK item preparation incomplete or uncertain; resident\n");return 0;}
+-  if(!lucky_items_ready&&!steel195_tools_runtime_sdk_creative_only()){
++  if(!lucky_items_ready&&!steel195_tools_runtime_sdk_stock_items()){
+    logline("LCE SDK item preparation refused; SDK items stay off\n");sdk_only=0;
+   }
+  }else if(lucky_items_configured){
+@@ -745,15 +745,16 @@
+  if(lucky_enabled){lucky_custom_base=base;mc195_custom_startup_config custom{base,(uintptr_t)mc195_custom_redstone_neighbor,nullptr,mc195_lucky_candidate_attested,mc195_lucky_candidate_read,mc195_lucky_candidate_thread,lucky_custom_block,lucky_custom_completed};int rc=mc195_custom_startup_prepare(&custom,1);if(rc!=1){content_state("native-lucky-blocks",MC195_CONTENT_FAILED);logline("ABORT Lucky custom BE startup relay unavailable; resident\n");return 0;}}
+  int resource_ready=0;
+  const bool sdk_terrain_requested=sdk_only&&lce_sdk_terrain_wanted();
++ const bool sdk_has_stock_items=sdk_only&&steel195_tools_runtime_sdk_stock_items();
++ const bool creative_needed=!sdk_has_stock_items||steel195_tools_runtime_sdk_creative_only();
+  if(sdk_only){
+-  const bool sdk_creative_only=steel195_tools_runtime_sdk_creative_only()!=0;
+   /* Terrain uses the shared growth relay even with the stock item atlas. */
+-  if(!sdk_creative_only||sdk_terrain_requested){
++  if(!sdk_has_stock_items||sdk_terrain_requested){
+    int r=steel195_resource_hooks_start(base);
+    if(r<0){logline("ABORT resource relay publication uncertain; resident\n");return 0;}
+    if(r==1){resource_ready=1;mc195_growth_relay_mark_ready();}
+   }
+-  if((!sdk_creative_only&&!resource_ready)||steel195_creative_prepare(base)!=1){
++  if((!sdk_has_stock_items&&!resource_ready)||(creative_needed&&steel195_creative_prepare(base)!=1)){
+    logline("LCE SDK resource/Creative preparation unavailable; SDK items stay off\n");sdk_only=0;
+   }
+  }
+@@ -788,8 +789,10 @@
+   * Runtime paths remain inert until the movie hook/ownership is available. */
+  int craft_tabs=mc195_craft_candidate_start(base);
+  if(craft_tabs!=1)logline("Crafting tab base unavailable; native fallback\n");
+- int creative=steel195_creative_hook_start(base);
+- if(creative!=1){mc195_content_notices_fail(content_mask);char line[96];snprintf(line,sizeof line,"ABORT Steel creative hook=%d; resident\n",creative);logline(line);fail_selected_ports();return 0;}
++ if(creative_needed){
++  int creative=steel195_creative_hook_start(base);
++  if(creative!=1){mc195_content_notices_fail(content_mask);char line[96];snprintf(line,sizeof line,"ABORT Steel creative hook=%d; resident\n",creative);logline(line);fail_selected_ports();return 0;}
++ }
+  int craft=steel195_craft_hook_start(base);
+  if(craft!=1){mc195_content_notices_fail(content_mask);char line[96];snprintf(line,sizeof line,"ABORT Steel crafting hook=%d; resident\n",craft);logline(line);fail_selected_ports();return 0;}
+  int registry=steel195_registry_observer_start(base,logline);
+--- a/r72-session-candidate/loader/super_content_steel_nbt_save_195/tools_runtime.cpp
++++ b/r72-session-candidate/loader/super_content_steel_nbt_save_195/tools_runtime.cpp
+@@ -15,13 +15,17 @@
+ static int prepared_result,prepare_steel;
+ /* LCE mod loader SDK, W1: run the console-proven item/Creative/atlas pipeline
+  * for the "lce-sdk" provider alone, without the Steel pair or Steel owner. */
+-static int sdk_only,sdk_creative_only;
++static int sdk_only,sdk_creative_only,sdk_stock_items;
+ extern "C" int lce_sdk_creative_blocks_wanted(void) __attribute__((weak));
+ extern "C" int lce_sdk_creative_potions_wanted(void) __attribute__((weak));
++extern "C" int lce_sdk_crafting_wanted(void) __attribute__((weak));
+ extern "C" void steel195_tools_runtime_set_sdk_only(int on){if(!__atomic_load_n(&preparation,__ATOMIC_ACQUIRE))sdk_only=on?1:0;}
+ extern "C" int steel195_tools_runtime_sdk_only(void){return sdk_only;}
+ extern "C" int steel195_tools_runtime_sdk_creative_only(void){
+  return __atomic_load_n(&preparation,__ATOMIC_ACQUIRE)==3&&sdk_creative_only;
++}
++extern "C" int steel195_tools_runtime_sdk_stock_items(void){
++ return __atomic_load_n(&preparation,__ATOMIC_ACQUIRE)==3&&sdk_stock_items;
+ }
+ static int owner_ready(void){return sdk_only||steel195_owner_status()==3;}
+ static OrbisPthread preparation_worker;
+@@ -58,8 +62,9 @@
+  if(!enabled&&!mc195_custom_items_count()){
+   sdk_creative_only=sdk_only&&((lce_sdk_creative_blocks_wanted&&lce_sdk_creative_blocks_wanted())||
+    (lce_sdk_creative_potions_wanted&&lce_sdk_creative_potions_wanted()));
+-  __atomic_store_n(&preparation,sdk_creative_only?3u:6u,__ATOMIC_RELEASE);
+-  return sdk_creative_only;
++  sdk_stock_items=sdk_creative_only||(sdk_only&&lce_sdk_crafting_wanted&&lce_sdk_crafting_wanted());
++  __atomic_store_n(&preparation,sdk_stock_items?3u:6u,__ATOMIC_RELEASE);
++  return sdk_stock_items;
+  }
+  if(scePthreadCreate(&preparation_worker,nullptr,prepare_worker,nullptr,"mc195_steel_reserve")){
+   __atomic_store_n(&preparation,4u,__ATOMIC_RELEASE);return 0;
+@@ -89,10 +94,10 @@
+  unsigned zero=0;uintptr_t ingot=0,pickaxe=0;
+  if(__atomic_load_n(&preparation,__ATOMIC_ACQUIRE)!=3||!owner_ready()||
+     !__atomic_compare_exchange_n(&registration,&zero,1u,false,__ATOMIC_ACQ_REL,__ATOMIC_ACQUIRE))return 0;
+- if(mc195_mapped_active()){lce195_items_window *mapped=mc195_lucky_window();if(!mapped||sdk_creative_only)return fail_registration(3,0);selected_window=mapped;}
++ if(mc195_mapped_active()){lce195_items_window *mapped=mc195_lucky_window();if(!mapped||sdk_stock_items)return fail_registration(3,0);selected_window=mapped;}
+  else {window.read=read_mem;window.thread_id=tid;if(!lce195_items_window_enter(&window,base,1))return fail_registration(3,0);}
+- if(sdk_creative_only){
+-  /* Attest and close the ordinary item window before the SDK publishes BlockItems. */
++ if(sdk_stock_items){
++  /* Keep the stock item catalog and close the window before the next SDK phase. */
+   if(!lce195_items_window_leave(&window))return fail_registration(4,-1);
+   __atomic_store_n(&registration,2u,__ATOMIC_RELEASE);return 1;
+  }
+@@ -134,10 +139,10 @@
+  return sdk_only&&__atomic_load_n(&registration,__ATOMIC_ACQUIRE)==2&&publisher.state==2?publisher.base:0;
+ }
+ extern "C" const lce195_item_catalog *steel195_tools_runtime_catalog(void){
+- return __atomic_load_n(&registration,__ATOMIC_ACQUIRE)==2&&!sdk_creative_only?&catalog:nullptr;
++ return __atomic_load_n(&registration,__ATOMIC_ACQUIRE)==2&&!sdk_stock_items?&catalog:nullptr;
+ }
+ extern "C" int steel195_tools_runtime_identity(void){
+- if(sdk_only)return __atomic_load_n(&registration,__ATOMIC_ACQUIRE)==2&&!sdk_creative_only&&mc195_custom_items_identity();
++ if(sdk_only)return __atomic_load_n(&registration,__ATOMIC_ACQUIRE)==2&&!sdk_stock_items&&mc195_custom_items_identity();
+  if(__atomic_load_n(&registration,__ATOMIC_ACQUIRE)!=2||names.state!=2||names.count!=4||tool_names.state!=1)return 0;
+  for(unsigned i=0;i<4;i++){
+   lce195_item_vtable_spec s{};uintptr_t actual=0,original[59]{};
+@@ -185,6 +190,7 @@
+ extern "C" int steel195_tools_runtime_creative_prepare(uintptr_t b){
+  unsigned zero=0;
+  return b==base&&__atomic_load_n(&preparation,__ATOMIC_ACQUIRE)==3&&
++  (!sdk_stock_items||sdk_creative_only)&&
+   __atomic_compare_exchange_n(&creative_status,&zero,1u,false,__ATOMIC_ACQ_REL,__ATOMIC_ACQUIRE);
+ }
+ extern "C" int steel195_tools_runtime_creative_build(void){
+@@ -212,7 +218,7 @@
+  __atomic_store_n(&creative_status,rc==1?3u:rc<0?5u:4u,__ATOMIC_RELEASE);return rc;
+ }
+ extern "C" const lce195_item_catalog *steel195_tools_runtime_creative_catalog(void){
+- if(__atomic_load_n(&registration,__ATOMIC_ACQUIRE)!=2||sdk_creative_only)return nullptr;return mc195_mapped_active()?&creative_view:&catalog;
++ if(__atomic_load_n(&registration,__ATOMIC_ACQUIRE)!=2||sdk_stock_items)return nullptr;return mc195_mapped_active()?&creative_view:&catalog;
+ }
+ extern "C" unsigned steel195_tools_runtime_creative_status(void){return __atomic_load_n(&creative_status,__ATOMIC_ACQUIRE);}
+ extern "C" unsigned steel195_tools_runtime_creative_count(void){return steel195_tools_runtime_creative_status()==3?lce195_creative_count(&creative):0;}
+@@ -222,7 +228,7 @@
+ }
+ extern "C" void steel195_tools_runtime_snapshot(steel195_tools_runtime_status *out){
+  if(!out)return;out->preparation=__atomic_load_n(&preparation,__ATOMIC_ACQUIRE);out->registration=__atomic_load_n(&registration,__ATOMIC_ACQUIRE);
+- out->names=out->registration==2&&!sdk_creative_only?2u:0u;out->recipes=__atomic_load_n(&recipe_status,__ATOMIC_ACQUIRE);out->creative=steel195_tools_runtime_creative_status();
++ out->names=out->registration==2&&!sdk_stock_items?2u:0u;out->recipes=__atomic_load_n(&recipe_status,__ATOMIC_ACQUIRE);out->creative=steel195_tools_runtime_creative_status();
+  out->count=out->registration==2?catalog.count:0u;out->icons=__atomic_load_n(&icons,__ATOMIC_ACQUIRE);out->generations=__atomic_load_n(&generations,__ATOMIC_ACQUIRE);
+ }
+ extern "C" int steel195_tools_runtime_ready(void){
+--- a/r72-session-candidate/loader/super_content_steel_nbt_save_195/tools_runtime.h
++++ b/r72-session-candidate/loader/super_content_steel_nbt_save_195/tools_runtime.h
+@@ -12,6 +12,7 @@
+ int steel195_tools_runtime_prepare(uintptr_t,int);
+ /* SDK startup with BlockItems or tagged stock stacks and no additive item atlas owner. */
+ int steel195_tools_runtime_sdk_creative_only(void);
++int steel195_tools_runtime_sdk_stock_items(void);
+ int steel195_tools_runtime_after_items(void);
+ int steel195_tools_runtime_crafting(uintptr_t);
+ const lce195_item_catalog *steel195_tools_runtime_catalog(void);

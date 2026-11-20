@@ -1,0 +1,22 @@
+{
+  "format": 1,
+  "id": "potiononly",
+  "name": "Creative Potion Fixture",
+  "version": "1.0.0",
+  "potions": [
+    {
+      "key": "potiononly:first",
+      "name": "Potion of Mending",
+      "effects": [{"effect": "minecraft:regeneration", "duration": 200}],
+      "splash": 1,
+      "lingering": 1
+    },
+    {
+      "key": "potiononly:second",
+      "name": "Potion of Haste",
+      "effects": [{"effect": "minecraft:speed", "duration": 200}],
+      "splash": 0,
+      "lingering": 0
+    }
+  ]
+}

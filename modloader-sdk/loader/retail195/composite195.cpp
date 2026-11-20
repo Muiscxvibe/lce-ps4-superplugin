@@ -1,5 +1,6 @@
 // Composite retail195 backend and startup phase dispatcher. See composite195.h.
 #include "composite195.h"
+#include "../../integration/sdk_creative_potions.h"
 #include <stdarg.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -73,7 +74,10 @@ int startup_held(void *) { return g_c && g_c->late_held && tid(g_c) == g_c->item
 // strings195/enchants195: the late phase or the per-tick strings ensure (main UI thread)
 int strings_held(void *) { return g_c && (g_c->late_held || g_c->ui_held) && tid(g_c) == g_c->items_thread ? 1 : 0; }
 // effects195: the item window (pre_collect) or the after-items fallback (startup thread)
-int effects_held(void *) { return g_c && g_c->effect_window && tid(g_c) == g_c->items_thread ? 1 : 0; }
+int effects_held(void *) {
+    return g_c && g_c->effect_window && tid(g_c) == g_c->items_thread &&
+        (!g_c->creative_potion_held || g_c->creative_potion_held(g_c->creative_potion_ctx) == 1);
+}
 s195_env g_senv;
 lce195e_effect_publisher g_effect_pub;
 lce195e_potion_publisher g_potion_pub;
@@ -844,11 +848,103 @@ extern "C" const char *lce195c_creative_block_key(const lce195c *c, uintptr_t it
         ? b195_creative_key(&g_blocks, item, item_id) : nullptr;
 }
 
+namespace {
+uint32_t creative_potion_forms(const lce_potion_desc *d) {
+    uint32_t forms = LCE_SDK_CREATIVE_POTION_DRINK | LCE_SDK_CREATIVE_POTION_ARROW;
+    if (d->splash) forms |= LCE_SDK_CREATIVE_POTION_SPLASH;
+    if (d->lingering) forms |= LCE_SDK_CREATIVE_POTION_LINGERING;
+    return forms;
+}
+int publish_potions(lce195c *c, bool early) {
+    int rc = 1;
+    static lce195e_potion_spec specs[LCE195E_MAX_POTIONS];
+    char e[160] = {0};
+    c->effect_window = 1;
+    try {
+        for (uint32_t i = 0; i < c->potion_count && rc == 1; ++i) {
+            uint32_t sid[6] = {c->potion_sid[i][0], c->potion_sid[i][1], c->potion_sid[i][2], c->potion_sid[i][3], 0, 0};
+            if (lce195e_potion_spec_from_desc(&c->effects_env, (const lce_potion_desc *)c->potion_ext[i]->desc, sid, &specs[i], e, sizeof e) != LCE_OK) rc = 0;
+            else specs[i].key = c->potion_ext[i]->key;
+        }
+        if (rc == 1) {
+            memset(&g_potion_pub, 0, sizeof g_potion_pub);
+            g_potion_pub.env = &c->effects_env;
+            rc = CALL(LCE195C_PH_POTIONS, &g_potion_pub, 0, lce195e_potions_publish(&g_potion_pub, specs, c->potion_count));
+        }
+    } catch (...) {
+        // Native registration may have changed the registry before unwinding.
+        rc = -1;
+        snprintf(e, sizeof e, "native registration unwound");
+    }
+    c->effect_window = 0;
+    char d[200];
+    snprintf(d, sizeof d, "%u potion type(s) %s", c->potion_count, rc == 1 ? "published (potion, splash, lingering, tipped arrow)" : e[0] ? e : rc ? "UNCERTAIN" : "refused");
+    if (early && rc == 0) {
+        c->phase[LCE195C_PH_POTIONS] = LCE195C_WAITING;
+        logf(c, "LCE_SDK Creative potion registration deferred to title: %s", d);
+    } else mark(c, LCE195C_PH_POTIONS, rc, d);
+    return rc;
+}
+}
+
+extern "C" int lce195c_creative_potions_wanted(const lce195c *c) {
+    return c && c->state == 2 && c->potion_count;
+}
+
+extern "C" int lce195c_creative_potion_entries(lce195c *c, uintptr_t base, void *ctx, int (*held)(void *),
+                                              lce_sdk_creative_potion_entry *out, uint32_t entry_capacity, uint32_t row_capacity) {
+    if (!lce195c_creative_potions_wanted(c) || !base || base != c->bind.base ||
+        base > UINTPTR_MAX - 0x143d010u || !out || !held || held(ctx) != 1)
+        return 0;
+    uint32_t rows = 0;
+    for (uint32_t i = 0; i < c->potion_count; ++i)
+        rows += (uint32_t)__builtin_popcount(creative_potion_forms((const lce_potion_desc *)c->potion_ext[i]->desc));
+    if (entry_capacity < c->potion_count || row_capacity < rows) {
+        logf(c, "LCE_SDK Creative needs %u entries and %u rows; registration deferred to title", c->potion_count, rows);
+        return 0;
+    }
+    if (!c->bind.no_level || c->bind.no_level(c->bind.host) != 1 || !c->bind.mem.read ||
+        !c->phase[LCE195C_PH_AFTER_ITEMS])
+        return 0;
+    uintptr_t specs = 0;
+    if (!c->bind.mem.read(c->bind.mem.ctx, base + 0x143d010u, &specs, sizeof specs) || specs || held(ctx) != 1)
+        return 0;
+    const uint64_t thread = tid(c);
+    uint32_t open = 0;
+    if (!thread || !__atomic_compare_exchange_n(&c->potion_gate, &open, 1u, false, __ATOMIC_ACQ_REL, __ATOMIC_ACQUIRE))
+        return 0;
+
+    int rc = 0;
+    if (c->phase[LCE195C_PH_POTIONS] == LCE195C_DONE) rc = 1;
+    else if (c->phase[LCE195C_PH_POTIONS] == LCE195C_NOT_RUN) {
+        c->items_thread = thread;
+        c->creative_potion_ctx = ctx;
+        c->creative_potion_held = held;
+        rc = publish_potions(c, true);
+        c->creative_potion_held = nullptr;
+        c->creative_potion_ctx = nullptr;
+    }
+    const unsigned count = rc == 1 && held(ctx) == 1 && g_potion_pub.state == 2 &&
+        g_potion_pub.published == c->potion_count ? c->potion_count : 0;
+    for (unsigned i = 0; i < count; ++i) {
+        const auto &record = g_potion_pub.records[i];
+        const auto *desc = (const lce_potion_desc *)c->potion_ext[i]->desc;
+        out[i] = {record.object, record.key, creative_potion_forms(desc)};
+    }
+    __atomic_store_n(&c->potion_gate, 0u, __ATOMIC_RELEASE);
+    return (int)count;
+}
+
 extern "C" int lce195c_phase_late(lce195c *c) {
     if (!c || c->state != 2) return 0;
     lce195c_net_tick(c);
     if (c->phase[LCE195C_PH_SMELT_BREW] && c->phase[LCE195C_PH_SMELT_BREW] != LCE195C_WAITING) return 1;   // once
     if (!c->bind.no_level || c->bind.no_level(c->bind.host) != 1) { c->phase[LCE195C_PH_SMELT_BREW] = LCE195C_WAITING; return 0; }
+    uint32_t open = 0;
+    if (c->potion_count && !__atomic_compare_exchange_n(&c->potion_gate, &open, 2u, false, __ATOMIC_ACQ_REL, __ATOMIC_ACQUIRE)) {
+        c->phase[LCE195C_PH_SMELT_BREW] = LCE195C_WAITING;
+        return 0;
+    }
     c->items_thread = tid(c);
     c->late_held = 1;
     int result = 1;
@@ -867,24 +963,8 @@ extern "C" int lce195c_phase_late(lce195c *c) {
         if (rc < 0) result = -1; else if (rc == 0 && result > 0) result = 0;   // names missing: content still works, ensure retries every tick
     } else none(c, LCE195C_PH_STRINGS);
     if (c->potion_count) {
-        int rc = 1;
-        static lce195e_potion_spec specs[LCE195E_MAX_POTIONS];
-        char e[160] = {0};
-        c->effect_window = 1;
-        for (uint32_t i = 0; i < c->potion_count && rc == 1; ++i) {
-            uint32_t sid[6] = {c->potion_sid[i][0], c->potion_sid[i][1], c->potion_sid[i][2], c->potion_sid[i][3], 0, 0};
-            if (lce195e_potion_spec_from_desc(&c->effects_env, (const lce_potion_desc *)c->potion_ext[i]->desc, sid, &specs[i], e, sizeof e) != LCE_OK) rc = 0;
-            else specs[i].key = c->potion_ext[i]->key;
-        }
-        if (rc == 1) {
-            memset(&g_potion_pub, 0, sizeof g_potion_pub);
-            g_potion_pub.env = &c->effects_env;
-            rc = CALL(LCE195C_PH_POTIONS, &g_potion_pub, 0, lce195e_potions_publish(&g_potion_pub, specs, c->potion_count));
-        }
-        c->effect_window = 0;
-        char d[200];
-        snprintf(d, sizeof d, "%u potion type(s) %s", c->potion_count, rc == 1 ? "published (potion, splash, lingering, tipped arrow)" : e[0] ? e : rc ? "UNCERTAIN" : "refused");
-        mark(c, LCE195C_PH_POTIONS, rc, d);
+        const uint32_t phase = c->phase[LCE195C_PH_POTIONS];
+        const int rc = phase == LCE195C_DONE ? 1 : phase == LCE195C_UNCERTAIN ? -1 : publish_potions(c, false);
         if (rc < 0) result = -1; else if (rc == 0 && result > 0) result = 0;
     } else none(c, LCE195C_PH_POTIONS);
     if (c->enchant_count) {

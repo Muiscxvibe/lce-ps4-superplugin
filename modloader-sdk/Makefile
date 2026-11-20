@@ -10,7 +10,7 @@ B = build/host
 CORE = loader/package.cpp loader/ledger.cpp loader/loader.cpp loader/ext.cpp
 ITEMS195 = modules/items195/items.cpp modules/items195/recipes.cpp modules/items195/furnace.cpp modules/items195/effects.cpp modules/items195/adapter.cpp
 PKGS = build/pkg/newretail/mod.lcm build/pkg/allcontent/mod.lcm build/pkg/retailall/mod.lcm build/pkg/rubyretail/mod.lcm build/pkg/rubymod/mod.lcm build/pkg/gem/mod.lcm build/pkg/rubytools/mod.lcm build/pkg/orphan/mod.lcm build/pkg/badver/mod.lcm build/pkg/blockstates/mod.lcm build/pkg/throwables/mod.lcm build/pkg/boats/mod.lcm build/pkg/shapes/mod.lcm build/pkg/fueltest/mod.lcm build/pkg/luafuel/mod.lcm
-PKGS += build/pkg/luamobs/mod.lcm build/pkg/luatexture/mod.lcm build/pkg/luaworldgen/mod.lcm
+PKGS += build/pkg/luamobs/mod.lcm build/pkg/luatexture/mod.lcm build/pkg/luaworldgen/mod.lcm build/pkg/potiononly/mod.lcm
 
 all: test
 

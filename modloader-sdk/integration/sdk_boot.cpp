@@ -29,6 +29,7 @@
 #include <stdio.h>
 #include <string.h>
 #include "sdk_creative_blocks.h"
+#include "sdk_creative_potions.h"
 #include "../loader/loader.h"
 #if defined(LCE_EXPERIMENTAL_VIEWPORT_TINT)
 #include "viewport_tint_config.hpp"
@@ -302,6 +303,11 @@ extern "C" int lce_sdk_after_items(void) {
     return lce195c_phase_after_items(&g_composite);
 }
 
+extern "C" int lce_sdk_crafting_wanted(void) {
+    return __atomic_load_n(&g_boot_state, __ATOMIC_ACQUIRE) == 2u &&
+        g_composite.plan && g_composite.plan->recipe_count != 0;
+}
+
 extern "C" int lce_sdk_creative_blocks_wanted(void) {
     return __atomic_load_n(&g_boot_state, __ATOMIC_ACQUIRE) == 2u && lce195c_creative_blocks_wanted(&g_composite);
 }
@@ -315,6 +321,16 @@ extern "C" int lce_sdk_creative_block_entries(lce_sdk_creative_block_entry *out,
 extern "C" const char *lce_sdk_creative_block_key(uintptr_t item, uint32_t item_id) {
     return __atomic_load_n(&g_boot_state, __ATOMIC_ACQUIRE) == 2u
         ? lce195c_creative_block_key(&g_composite, item, item_id) : nullptr;
+}
+
+extern "C" int lce_sdk_creative_potions_wanted(void) {
+    return __atomic_load_n(&g_boot_state, __ATOMIC_ACQUIRE) == 2u && lce195c_creative_potions_wanted(&g_composite);
+}
+
+extern "C" int lce_sdk_creative_potion_entries(uintptr_t base, void *ctx, int (*held)(void *),
+                                               lce_sdk_creative_potion_entry *out, uint32_t entry_capacity, uint32_t row_capacity) {
+    return __atomic_load_n(&g_boot_state, __ATOMIC_ACQUIRE) == 2u
+        ? lce195c_creative_potion_entries(&g_composite, base, ctx, held, out, entry_capacity, row_capacity) : 0;
 }
 
 /* Phase 7: called from super.cpp ui_tick on the native UI thread. Runs the

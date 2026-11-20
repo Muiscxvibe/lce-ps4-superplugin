@@ -1,0 +1,18 @@
+diff --git a/r72-session-candidate/loader/additive_items_195/creative.h b/r72-session-candidate/loader/additive_items_195/creative.h
+--- a/r72-session-candidate/loader/additive_items_195/creative.h
++++ b/r72-session-candidate/loader/additive_items_195/creative.h
+@@ -4,9 +4,11 @@
+ #ifdef __cplusplus
+ extern "C" {
+ #endif
+-/* Named/tagged stack variants share their base item and do not consume an
+- * atlas tile or native item ID. Keep their row budget separate. */
+-#define LCE195_CREATIVE_CAPACITY 512u
++/* Supports 64 ordinary items, 304 block variants, 256 potion forms,
++ * 640 enchanted books (64 enchantments at 10 levels), 16 spawn eggs
++ * and the built-in tagged variants. The native grid uses 50 rows per page,
++ * and its page indicator supports up to 64 pages. */
++#define LCE195_CREATIVE_CAPACITY 1300u
+ typedef struct lce195_additive_creative {
+  uint32_t state,count;
+  uintptr_t base,group[4];

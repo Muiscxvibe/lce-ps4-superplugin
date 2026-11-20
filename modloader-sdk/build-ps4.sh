@@ -30,10 +30,13 @@ c_obj loader/sha256.c "$out/sha256.o"
 c_obj loader/retail195/oneshot195.c "$out/oneshot195.o"
 # core loader, composite backend, PS4 host, startup owner
 for src in loader/package.cpp loader/ledger.cpp loader/loader.cpp loader/ext.cpp \
-           loader/retail195/backend195.cpp loader/retail195/composite195.cpp loader/retail195/services_glue195.cpp loader/retail195/host_ps4.cpp \
+           loader/retail195/backend195.cpp loader/retail195/services_glue195.cpp loader/retail195/host_ps4.cpp \
            integration/sdk_boot.cpp integration/r72_world_bind195.cpp; do
   cxx_obj "$src" "$out/$(basename "${src%.cpp}").o"
 done
+# Potion publication catches native registry unwinds and closes the Creative lease.
+o="$out/composite195.o"
+clang++ "${flags[@]}" "${cxx_eh[@]}" -c loader/retail195/composite195.cpp -o "$o"; objs+=("$o")
 # modules
 for src in modules/items195/items.cpp modules/items195/recipes.cpp modules/items195/furnace.cpp modules/items195/effects.cpp modules/items195/adapter.cpp \
            modules/blocks195/blocks195.cpp modules/entities195/entities195.cpp modules/worldgen195/worldgen195.cpp modules/ui195/ui195.cpp \

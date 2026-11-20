@@ -36,10 +36,17 @@ particles. The offline CUSA00265 1.95 test verified scripted inventory grants,
 item and placed-block textures, a visible cyan particle burst, and saving and
 reopening a world containing the custom block. Creative → Mods automatically
 lists registered SDK items and placeable custom block variants, including those
-from packages that register zero ordinary items. The console test verified
-names, taking and placement with a block-only package. A block declared
-`no_item` has no inventory entry. Custom potion, enchantment book and spawn egg
-stacks do not yet have Creative Mods entries.
+from packages that register zero ordinary items. A block declared `no_item`
+has no inventory entry. Registered potions appear with their drinkable and
+tipped-arrow forms, plus splash and lingering forms when enabled. Enchanted
+books and spawn eggs are pending.
+
+The crafting table's separate Mods tab lists registered recipes even when
+the package adds no items or blocks. On a retail 1.95 PS4, the tab listed all
+five recipes in a test package across its Tools, Materials, Food, Armour and
+Misc categories. The Tools test consumed a stick and a bowl and returned one
+emerald. The Creative potion test listed eight entries and placed a named
+potion in the player's hotbar.
 
 Mob registration and renderer startup passed on the console. The native SDK
 mob spawn route, viewport tint and opt-in package waypoints still need gameplay
@@ -49,8 +56,11 @@ The SDK host suites run with `make -C modloader-sdk test`. The build script
 for the full plugin uses the local r72 integration workspace, prebuilt
 components and OpenOrbis. From the workspace root, apply
 [`modloader-r72.patch`](plugin/patches/modloader-r72.patch),
-[`modloader-features-r72.patch`](plugin/patches/modloader-features-r72.patch), and
-[`modloader-creative-r72.patch`](plugin/patches/modloader-creative-r72.patch)
+[`modloader-features-r72.patch`](plugin/patches/modloader-features-r72.patch),
+[`modloader-creative-r72.patch`](plugin/patches/modloader-creative-r72.patch),
+[`modloader-potion-creative-r72.patch`](plugin/patches/modloader-potion-creative-r72.patch),
+[`modloader-creative-capacity-r72.patch`](plugin/patches/modloader-creative-capacity-r72.patch), and
+[`modloader-crafting-stock-r72.patch`](plugin/patches/modloader-crafting-stock-r72.patch)
 in that order. Overlay the plugin and transport sources in their respective
 build directories.
 

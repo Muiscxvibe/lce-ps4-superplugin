@@ -198,7 +198,7 @@ fi
 clang++ "${flags[@]}" "${cxx[@]}" -fexceptions \
   -c "$root/loader/lucky_block_world_events_195/entity.cpp" -o "$crash/build/lucky_world_entity.o"
 s195="$root/loader/super_content_steel_nbt_save_195"
-for o in super trace tools_runtime process_resource content_process content_craft_hook creative_mods_category tools_generic_creative lucky_integration craft_provider/integration_provider_capture craft_provider/modded-crafting-candidate; do
+for o in super trace tools_runtime process_resource content_process content_craft_hook creative_mods_category creative_mods_grid tools_generic_creative tools_generic_named_stack lucky_r30_lucky_items_providers lucky_integration craft_provider/integration_provider_capture craft_provider/modded-crafting-candidate; do
  [ -f "$crash/build/$o.o.pre-sdk.keep" ] || cp "$crash/build/$o.o" "$crash/build/$o.o.pre-sdk.keep"
 done
 clang++ "${flags[@]}" "${cxx[@]}" -c "$s195/super.cpp" -o "$crash/build/super.o"
@@ -213,7 +213,10 @@ clang++ "${flags[@]}" "${cxx[@]}" -fexceptions -c "$root/loader/shared_server_sc
 clang++ "${flags[@]}" "${cxx[@]}" -I"$root/loader/steel_startup_trace_195" -DSTEEL_TRACE_COMPONENT -c "$s195/registry_trace.cpp" -o "$crash/build/trace.o"
 clang++ "${flags[@]}" "${cxx[@]}" -I"$root/compatibility/ruby/vendor/lua-5.4.8/src" -c "$s195/tools_runtime.cpp" -o "$crash/build/tools_runtime.o"
 clang++ "${flags[@]}" "${cxx[@]}" -c "$s195/category.cpp" -o "$crash/build/creative_mods_category.o"
+clang++ "${flags[@]}" "${cxx[@]}" -c "$s195/grid.cpp" -o "$crash/build/creative_mods_grid.o"
 clang++ "${flags[@]}" "${cxx[@]}" -c "$root/loader/additive_items_195/creative.cpp" -o "$crash/build/tools_generic_creative.o"
+clang++ "${flags[@]}" "${cxx[@]}" -fexceptions -I"$lcesdk/integration" -c "$root/loader/additive_items_195/named_stack.cpp" -o "$crash/build/tools_generic_named_stack.o"
+clang++ "${flags[@]}" "${cxx[@]}" -fexceptions -c "$s195/lucky_items_providers.cpp" -o "$crash/build/lucky_r30_lucky_items_providers.o"
 clang++ "${flags[@]}" "${cxx[@]}" -c "$s195/lucky_integration.cpp" -o "$crash/build/lucky_integration.o"
 clang++ "${flags[@]}" "${cxx[@]}" -I"$root/compatibility/ruby/vendor/lua-5.4.8/src" -Dsteel195_resource_grow=mc195_items_resource_grow -c "$s195/resource.cpp" -o "$crash/build/process_resource.o"
 clang++ "${flags[@]}" "${cxx[@]}" -c "$s195/content_process.cpp" -o "$crash/build/content_process.o"

@@ -139,6 +139,9 @@ typedef struct lce195c {
     uint16_t *text_pool; uint32_t text_pool_used, text_pool_cap;
     uint32_t net_channels, net_client_installed;   /* API 1.6 */
     uint32_t effect_count, potion_count, enchant_count, biome_count, sound_pcm_count;
+    uint32_t potion_gate;                   /* 0 Creative open, 1 Creative lease, 2 title owns publication */
+    void *creative_potion_ctx;
+    int (*creative_potion_held)(void *);
     lce195e_env effects_env;
     lce195e_effect_spec effect_specs[LCE195E_MAX_EFFECTS];
     const lce_plan_ext *potion_ext[LCE195E_MAX_POTIONS]; uint32_t potion_sid[LCE195E_MAX_POTIONS][4];
@@ -163,6 +166,10 @@ int lce195c_phase_after_items(lce195c *c);      /* startup thread, after the ite
 int lce195c_creative_blocks_wanted(const lce195c *c);
 int lce195c_creative_block_entries(const lce195c *c, struct lce_sdk_creative_block_entry *out, uint32_t capacity);
 const char *lce195c_creative_block_key(const lce195c *c, uintptr_t item, uint32_t item_id);
+struct lce_sdk_creative_potion_entry;
+int lce195c_creative_potions_wanted(const lce195c *c);
+int lce195c_creative_potion_entries(lce195c *c, uintptr_t base, void *ctx, int (*held)(void *),
+                                  struct lce_sdk_creative_potion_entry *out, uint32_t entry_capacity, uint32_t row_capacity);
 int lce195c_phase_late(lce195c *c);             /* main thread at the title, no Level; runs once */
 int lce195c_world_entry_allowed(const lce195c *c);
 uint32_t lce195c_phase_state(const lce195c *c, uint32_t phase);

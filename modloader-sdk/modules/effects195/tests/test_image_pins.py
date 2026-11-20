@@ -76,6 +76,14 @@ check(rel_target(0x67140d) == 0x55e620 and rd(0x671402, 5) == bytes.fromhex('ba0
 check(rel_target(0x6eba5d) == 0x55e620 and rd(0x6eba52, 5) == bytes.fromhex('ba03000000'), 'TippedArrowItem uses kind 3')
 check(rd(0x565e65, 3) == bytes.fromhex('488d15') and rel_target(0x565e79) == 0x1af2a0, 'PotionItem name: getString(tag, [0x142eba8]) -> registry get')
 check(rd(0x562ceb, 3) == bytes.fromhex('488d0d') and rel_target(0x562dad) == 0x1af3b0, 'setPotion: putString("Potion", registry getKey)')
+# Private Mods Creative entry runs inside native tab setup after the stock potion rows
+# have consumed live Potion objects, before its TabSpec array is allocated and assigned.
+check(all(rd(at, 1)[0] == 0xe8 and rel_target(at) == 0xa34240 for at in (0xa31d0d, 0xa31d22, 0xa31da0)),
+      'Creative setup appends native stock Potion rows before the Mods hook')
+check(rel_target(0xa33027) == 0xe6cfc0 and rd(0xa3302c, 7) == bytes.fromhex('4c8d3ddd9fa000')
+      and rd(0xa3303b, 3) == bytes.fromhex('4d8937'), 'Creative hook precedes publication of TabSpecs at 0x143d010')
+check(rd(0x562de2, 17) == bytes.fromhex('c4c178100c24c4c178110ec4c178110424'),
+      'PotionUtils::setPotion moves the input pair into its distinct return storage')
 check(cstr(0xe9df69) == 'invalid unordered_map<K, T> key' and rel_target(0x4c3372) == 0xe6cf80, 'MappedRegistry::get throws on unknown keys (0x4c336b): callers must use known keys')
 
 print(f'test_image_pins: {checks} checks, {fails} failures')

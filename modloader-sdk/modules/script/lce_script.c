@@ -337,7 +337,8 @@ static int b_register_block(lua_State *L) {
     if (rc == LCE_OK) ++s->st.blocks; else ++s->st.denied;
     lua_pushboolean(L, rc == LCE_OK); lua_pushinteger(L, rc); return 2;
 }
-/* lce.register_recipe{key=, result=, count=, shapeless=bool, cells={...}, width=, height=} */
+/* lce.register_recipe{key=, result=, count=, shapeless=bool, cells={...}, width=, height=}.
+ * Shaped cells use three entries per row. Shapeless lists can omit dimensions. */
 static int b_register_recipe(lua_State *L) {
     lce_script *s = self(L);
     luaL_checktype(L, 1, LUA_TTABLE);
@@ -345,9 +346,11 @@ static int b_register_recipe(lua_State *L) {
     d.key = opt_field(L, 1, "key", NULL);
     d.result = opt_field(L, 1, "result", NULL);
     d.result_count = (uint16_t)int_field(L, 1, "count", 1);
-    d.shapeless = (uint8_t)int_field(L, 1, "shapeless", 0);
-    d.width = (uint8_t)int_field(L, 1, "width", 0);
-    d.height = (uint8_t)int_field(L, 1, "height", 0);
+    lua_getfield(L, 1, "shapeless");
+    d.shapeless = (uint8_t)(lua_isboolean(L, -1) ? lua_toboolean(L, -1) : lua_tointeger(L, -1));
+    lua_pop(L, 1);
+    d.width = (uint8_t)int_field(L, 1, "width", d.shapeless ? 3 : 0);
+    d.height = (uint8_t)int_field(L, 1, "height", d.shapeless ? 3 : 0);
     d.craft_tab = opt_field(L, 1, "craft_tab", NULL);
     for (int i = 0; i < 9; ++i) d.cells[i].aux = -1;
     lua_getfield(L, 1, "cells");
@@ -1214,14 +1217,18 @@ static int w_register_block(lua_State *L) {
     if (rc == LCE_OK) ++s->st.blocks; else ++s->st.denied;
     lua_pushboolean(L, rc == LCE_OK); return 1;
 }
-/* registerShapedRecipe(id, pattern{rows}, key{sym=item}, result, opts{count,group}) */
+/* registerShapedRecipe(id, pattern{rows}, key{sym=item}, result, opts{count,craft_tab}) */
 static int w_register_shaped(lua_State *L) {
     lce_script *s = self(L);
     const char *id = luaL_checkstring(L, 1);
     luaL_checktype(L, 2, LUA_TTABLE); luaL_checktype(L, 3, LUA_TTABLE);
     const char *result = luaL_checkstring(L, 4);
     lce_recipe_desc d; memset(&d, 0, sizeof d); d.struct_size = sizeof d;
-    d.key = id; d.result = result; d.result_count = (uint16_t)int_field(L, 5, "count", 1);
+    d.key = id; d.result = result; d.result_count = 1;
+    if (lua_istable(L, 5)) {
+        d.result_count = (uint16_t)int_field(L, 5, "count", 1);
+        d.craft_tab = opt_field(L, 5, "craft_tab", NULL);
+    }
     for (int i = 0; i < 9; ++i) d.cells[i].aux = -1;
     int rows = (int)luaL_len(L, 2); if (rows > 3) rows = 3;
     int width = 0;
@@ -1240,28 +1247,29 @@ static int w_register_shaped(lua_State *L) {
         if (c > width) width = c;
         lua_pop(L, 1);
     }
-    /* compact to width*height row-major */
-    lce_ingredient packed[9]; for (int i = 0; i < 9; ++i) { packed[i].item = NULL; packed[i].aux = -1; }
-    for (int r = 0; r < rows; ++r) for (int c = 0; c < width; ++c) packed[r * width + c] = d.cells[r * 3 + c];
-    memcpy(d.cells, packed, sizeof packed);
     d.width = (uint8_t)(width ? width : 1); d.height = (uint8_t)(rows ? rows : 1);
     lce_status rc = s->api->register_recipe ? s->api->register_recipe(s->ctx, &d) : LCE_E_UNSUPPORTED;
     if (rc == LCE_OK) ++s->st.recipes; else ++s->st.denied;
     lua_pushboolean(L, rc == LCE_OK); return 1;
 }
-/* registerShapelessRecipe(id, {ingredients}, result, opts{count}) */
+/* registerShapelessRecipe(id, {ingredients}, result, opts{count,craft_tab}) */
 static int w_register_shapeless(lua_State *L) {
     lce_script *s = self(L);
     const char *id = luaL_checkstring(L, 1);
     luaL_checktype(L, 2, LUA_TTABLE);
     const char *result = luaL_checkstring(L, 3);
     lce_recipe_desc d; memset(&d, 0, sizeof d); d.struct_size = sizeof d;
-    d.key = id; d.result = result; d.result_count = (uint16_t)int_field(L, 4, "count", 1);
+    d.key = id; d.result = result; d.result_count = 1;
+    if (lua_istable(L, 4)) {
+        d.result_count = (uint16_t)int_field(L, 4, "count", 1);
+        d.craft_tab = opt_field(L, 4, "craft_tab", NULL);
+    }
     d.shapeless = 1;
     for (int i = 0; i < 9; ++i) d.cells[i].aux = -1;
     int n = (int)luaL_len(L, 2); if (n > 9) n = 9;
     for (int i = 0; i < n; ++i) { lua_geti(L, 2, i + 1); if (lua_isstring(L, -1)) d.cells[i].item = lua_tostring(L, -1); lua_pop(L, 1); }
-    d.width = (uint8_t)(n ? n : 1); d.height = 1;
+    d.width = (uint8_t)(n < 3 ? (n ? n : 1) : 3);
+    d.height = (uint8_t)(n > 0 ? (n + 2) / 3 : 1);
     lce_status rc = s->api->register_recipe ? s->api->register_recipe(s->ctx, &d) : LCE_E_UNSUPPORTED;
     if (rc == LCE_OK) ++s->st.recipes; else ++s->st.denied;
     lua_pushboolean(L, rc == LCE_OK); return 1;
