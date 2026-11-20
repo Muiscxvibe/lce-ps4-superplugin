@@ -10,16 +10,17 @@ B = build/host
 CORE = loader/package.cpp loader/ledger.cpp loader/loader.cpp loader/ext.cpp
 ITEMS195 = modules/items195/items.cpp modules/items195/recipes.cpp modules/items195/furnace.cpp modules/items195/effects.cpp modules/items195/adapter.cpp
 PKGS = build/pkg/newretail/mod.lcm build/pkg/allcontent/mod.lcm build/pkg/retailall/mod.lcm build/pkg/rubyretail/mod.lcm build/pkg/rubymod/mod.lcm build/pkg/gem/mod.lcm build/pkg/rubytools/mod.lcm build/pkg/orphan/mod.lcm build/pkg/badver/mod.lcm build/pkg/blockstates/mod.lcm build/pkg/throwables/mod.lcm build/pkg/boats/mod.lcm build/pkg/shapes/mod.lcm build/pkg/fueltest/mod.lcm build/pkg/luafuel/mod.lcm
+PKGS += build/pkg/luamobs/mod.lcm build/pkg/luatexture/mod.lcm build/pkg/luaworldgen/mod.lcm
 
 all: test
 
 loader/vanilla_195.inc: tools/data/vanilla_195.json tools/gen_vanilla.py
 	python3 tools/gen_vanilla.py
 
-build/pkg/rubymod/mod.lcm: tools/lce_port.py tools/lce_modpack.py $(shell find examples/java-rubymod -type f)
+build/pkg/rubymod/mod.lcm: tools/lce_port.py tools/lce_modpack.py tools/port_compat.py $(shell find examples/java-rubymod -type f)
 	python3 tools/lce_port.py java examples/java-rubymod/src build/port/rubymod --hints examples/java-rubymod/hints.json
 	python3 tools/lce_modpack.py build build/port/rubymod build/pkg
-build/pkg/gem/mod.lcm: tools/lce_port.py tools/lce_modpack.py $(shell find examples/bedrock-sapphire -type f)
+build/pkg/gem/mod.lcm: tools/lce_port.py tools/lce_modpack.py tools/port_compat.py $(shell find examples/bedrock-sapphire -type f)
 	python3 tools/lce_port.py bedrock examples/bedrock-sapphire/BP examples/bedrock-sapphire/RP build/port/gem
 	python3 tools/lce_modpack.py build build/port/gem build/pkg
 build/pkg/%/mod.lcm: tests/fixtures/%/mod.json $(wildcard tests/fixtures/*/scripts/*.lua) $(wildcard tests/fixtures/*/textures/*.png) tools/lce_modpack.py tools/lce_ext_schema.py
@@ -58,7 +59,7 @@ LUA_SRC = $(filter-out modules/script/lua/lua.c modules/script/lua/luac.c,$(wild
 LUA_OBJ = $(patsubst modules/script/lua/%.c,$(B)/lua/%.o,$(LUA_SRC))
 $(B)/lua/%.o: modules/script/lua/%.c
 	@mkdir -p $(B)/lua; $(CC) -std=c11 -O1 -g $(SAN) -DLUA_USE_POSIX -w -c $< -o $@
-$(B)/lce_script.o: modules/script/lce_script.c modules/script/lce_script.h include/lce_mod_api.h
+$(B)/lce_script.o: modules/script/lce_script.c modules/script/lce_script.h include/lce_mod_api.h include/lce_tick_pacing.h
 	@mkdir -p $(B); $(CC) $(CFLAGS) -DLUA_USE_POSIX -c $< -o $@
 $(B)/test_composite195: tests/test_composite195.cpp tests/fake_effects195.h tests/mock_backend.cpp $(COMPOSITE) $(MODULES) $(CORE) $(B)/sha256.o $(B)/lce_script.o $(LUA_OBJ) loader/vanilla_195.inc
 	$(CXX) $(CXXFLAGS) -DLCE195_HOST_TEST -DLCE195C_HOST_TEST -DLE195_TEST tests/test_composite195.cpp tests/mock_backend.cpp $(COMPOSITE) $(MODULES) $(CORE) $(B)/sha256.o $(B)/lce_script.o $(LUA_OBJ) -lm -o $@

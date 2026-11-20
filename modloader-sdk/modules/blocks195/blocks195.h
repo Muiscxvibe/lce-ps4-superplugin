@@ -428,6 +428,7 @@ uint32_t b195_terrain_tile_count(const b195_module *m);
 int b195_terrain_compose(const b195_module *m, uint32_t tile_size, unsigned mip, uint8_t *out, size_t out_bytes);
 int b195_terrain_bind(b195_module *m, uintptr_t atlas, uint32_t generation, uint32_t width, uint32_t height,
                       uint32_t stock_height, uint32_t tile_size, uint32_t first_index);
+/* Bound sprites are restored only while the caller holds the terrain reload lease. */
 int b195_terrain_detach(b195_module *m);
 
 /* Descriptors for the lead's mapped window / Creative (after items phase). */

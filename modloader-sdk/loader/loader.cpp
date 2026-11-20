@@ -816,6 +816,7 @@ lce_status svc_tag_get(lce_mod_ctx *, void *, const char *, lce_nbt_value *) { r
 lce_status svc_tag_set(lce_mod_ctx *, void *, const char *, const lce_nbt_value *) { return LCE_E_UNSUPPORTED; }
 lce_status svc_tag_remove(lce_mod_ctx *, void *, const char *) { return LCE_E_UNSUPPORTED; }
 lce_status svc_particles(lce_mod_ctx *, void *, int32_t, double, double, double, uint32_t, double, double, double, double) { return LCE_E_UNSUPPORTED; }
+lce_status svc_tinted_particles(lce_mod_ctx *, void *, uint32_t, double, double, double, uint32_t, double) { return LCE_E_UNSUPPORTED; }
 
 // API 1.2 events are gated by the second capability word, which the backend's service/event layer reports
 // through lce_loader_set_services (api.capabilities2).
@@ -1264,6 +1265,7 @@ extern "C" lce_loader *lce_loader_create(const lce_loader_config *cfg) {
     a.explode = svc_explode; a.set_fire = svc_fire; a.damage_entity = svc_damage; a.heal = svc_heal;
     a.damage_held_item = svc_held; a.consume_held_item = svc_held; a.teleport = svc_move; a.set_motion = svc_move;
     a.spawn_particles = svc_particles;
+    a.spawn_tinted_particles = svc_tinted_particles;
     a.item_tag_get = svc_tag_get; a.item_tag_set = svc_tag_set; a.item_tag_remove = svc_tag_remove;
     a.register_channel = api_register_channel; a.send_payload = svc_send_payload;
     a.send_to_server = svc_send_to_server;
@@ -1546,7 +1548,7 @@ extern "C" void lce_loader_set_services(lce_loader *l, const lce_api *s) {
         if (s->consume_held_item) a.consume_held_item = s->consume_held_item;
         if (s->teleport) a.teleport = s->teleport;
         if (s->set_motion) a.set_motion = s->set_motion;
-        a.capabilities2 |= s->capabilities2;
+        a.capabilities2 |= s->capabilities2 & ~LCE_CAP2_SVC_TINTED_PARTICLES;
     }
     if (s->struct_size >= offsetof(lce_api, spawn_particles) + sizeof(void *) && s->spawn_particles)   // API 1.3 table
         a.spawn_particles = s->spawn_particles;
@@ -1565,6 +1567,11 @@ extern "C" void lce_loader_set_services(lce_loader *l, const lce_api *s) {
     }
     if (s->struct_size >= offsetof(lce_api, send_to_server) + sizeof(void *) && s->send_to_server)   // API 1.6 table
         a.send_to_server = s->send_to_server;
+    if (s->struct_size >= offsetof(lce_api, spawn_tinted_particles) + sizeof(s->spawn_tinted_particles) &&
+        s->spawn_tinted_particles) {
+        a.spawn_tinted_particles = s->spawn_tinted_particles;
+        a.capabilities2 |= s->capabilities2 & LCE_CAP2_SVC_TINTED_PARTICLES;
+    }
 }
 
 extern "C" int lce_loader_dispatch(lce_loader *l, lce_event ev, const void *payload) {

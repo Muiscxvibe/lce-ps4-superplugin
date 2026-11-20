@@ -87,6 +87,8 @@ void lce195_net_client_flush(uintptr_t listener);   /* [client thread, inside a 
 /* API 1.3: ServerLevel::sendParticles with a ParticleType id (ParticleType +0x28). LCE_E_NOTFOUND for unknown ids. */
 lce_status lce195_spawn_particles(lce_mod_ctx *, void *level, int32_t type_id, double x, double y, double z, uint32_t count,
                                   double dx, double dy, double dz, double speed);
+lce_status lce195_spawn_tinted_particles(lce_mod_ctx *, void *level, uint32_t rgb, double x, double y, double z,
+                                         uint32_t count, double spread);
 lce_status lce195_play_sound(lce_mod_ctx *, void *level, int32_t x, int32_t y, int32_t z, const char *sound);
 lce_status lce195_schedule(lce_mod_ctx *, uint32_t ticks, lce_event_fn fn, void *user);
 const char *lce195_translate(lce_mod_ctx *, const char *key);

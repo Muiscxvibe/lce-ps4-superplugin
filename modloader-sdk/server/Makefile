@@ -16,11 +16,11 @@ $(B)/test_modids_core: tests/test_modids_core.cpp tests/testkit.h new/Minecraft.
 
 $(B)/test_modchannel: tests/test_modchannel.cpp new/Minecraft.World/LceModChannelCore.h new/Minecraft.Client/LceModChannelRelay.h tests/fakeinc/Minecraft.World/CustomPayloadPacket.h
 	@mkdir -p $(B)
-	$(CXX) $(CXXFLAGS) -Itests/fakeinc/Minecraft.Client tests/test_modchannel.cpp -o $@
+	$(CXX) $(CXXFLAGS) -Itests/fakeinc/Minecraft.World tests/test_modchannel.cpp -o $@
 
 test: $(B)/test_modids_core $(B)/test_modchannel
 	cmp new/Minecraft.World/LceModIdWire.h $(NS)/lce_modids_wire.h
-	cd base && sha256sum -c --quiet ../patch-base.sha256
+	@if [ -d base ]; then cd base && sha256sum -c --quiet ../patch-base.sha256; else echo "SKIP server patch base checksum: source snapshot is absent"; fi
 	$(B)/test_modids_core
 	$(B)/test_modchannel
 

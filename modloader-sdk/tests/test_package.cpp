@@ -67,7 +67,13 @@ int main(int argc, char **argv) {
     { std::vector<uint8_t> c(pkg.begin(), pkg.end() - 4); CHECK(parse(c) != LCE_OK); }
     { std::vector<uint8_t> c = pkg; c[0] = 'X'; CHECK_EQ(parse(c), LCE_E_INVALID); }
     { std::vector<uint8_t> c = pkg; c[10] = 2; CHECK_EQ(parse(c), LCE_E_VERSION); }      // api major 2
-    { std::vector<uint8_t> c = pkg; c[12] = 9; CHECK_EQ(parse(c), LCE_E_VERSION); }      // api minor newer than loader
+    {
+        std::vector<uint8_t> c = pkg;
+        constexpr uint16_t newer = LCE_MOD_API_MINOR + 1;
+        c[12] = (uint8_t)newer;
+        c[13] = (uint8_t)(newer >> 8);
+        CHECK_EQ(parse(c), LCE_E_VERSION);
+    }
     { std::vector<uint8_t> c = pkg; c[56] = 1; CHECK_EQ(parse(c), LCE_E_INVALID); }      // reserved header byte
     // structural mutations with a correct hash must still be rejected or parse safely
     {   // overlapping sections: point section 1 at section 0

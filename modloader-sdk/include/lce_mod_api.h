@@ -36,7 +36,7 @@ extern "C" {
 #endif
 
 #define LCE_MOD_API_MAJOR 1
-#define LCE_MOD_API_MINOR 2
+#define LCE_MOD_API_MINOR 12
 #define LCE_MOD_API_VERSION ((LCE_MOD_API_MAJOR << 16) | LCE_MOD_API_MINOR)
 #define LCE_MOD_TARGET_GAME "CUSA00265-1.95"
 #define LCE_MOD_ENTRY_SYMBOL "lce_mod_main"
@@ -149,6 +149,8 @@ typedef enum {
 #define LCE_CAP2_BOATS              (1u << 27)  /* API 1.10: LCE_ITEM_FLAG_BOAT items (place a stock boat of boat_type) */
 #define LCE_HAVE_BLOCK_BOXES_1_11 1
 #define LCE_CAP2_BLOCK_BOXES        (1u << 28)  /* API 1.11: lce_block_desc shape LCE_SHAPE_BOXES (multi-box blocks) */
+#define LCE_HAVE_TINTED_PARTICLES_1_12 1
+#define LCE_CAP2_SVC_TINTED_PARTICLES (1u << 29) /* API 1.12: spawn_tinted_particles */
 
 /* ---- content descriptors ---------------------------------------------- */
 typedef enum {
@@ -228,7 +230,8 @@ typedef struct {
     uint32_t flags;
     /* ---- API 1.1 ---- */
     uint16_t block_entity_slots;     /* >0: block entity with an item inventory of this size, saved in the world.
-                                      * Retail 1.95: 9 only (DispenserBlockEntity, the 3x3 "Dispenser" screen) */
+                                      * Retail 1.95: 9 (DispenserBlockEntity) or 27 (ChestBlockEntity, opaque wood cube).
+                                      * Two adjacent compatible 27-slot blocks can form a 54-slot double chest. */
     uint8_t placement;               /* lce_block_placement */
     uint8_t flammability;            /* 0 = not flammable */
     uint32_t slipperiness_milli;     /* 0 = 600 (normal), ice = 980 */
@@ -292,12 +295,14 @@ typedef struct {
     uint16_t reserved;
 } lce_tab_desc;
 
+typedef enum { LCE_TEXTURE_ITEMS = 0, LCE_TEXTURE_TERRAIN = 1 } lce_texture_atlas;
+
 typedef struct {
     uint32_t struct_size;
-    const char *key;                 /* referenced by item/block descriptors */
-    uint16_t width, height;          /* 16x16 required for item/terrain atlas icons in API 1.0 */
-    const uint8_t *rgba;             /* width*height*4 bytes, straight alpha; copied at registration */
-    uint8_t atlas;                   /* 0 = items atlas, 1 = terrain (blocks) atlas */
+    const char *key;                 /* mod-owned resource key referenced by item/block descriptors */
+    uint16_t width, height;          /* each 16 pixels for LCE_TEXTURE_ITEMS and LCE_TEXTURE_TERRAIN */
+    const uint8_t *rgba;             /* width*height*4 bytes, row-major RGBA8, straight alpha; copied */
+    uint8_t atlas;                   /* lce_texture_atlas for item and block resources */
     uint8_t reserved[3];
 } lce_texture_desc;
 
@@ -575,6 +580,7 @@ typedef struct lce_api {
     void (*log)(lce_mod_ctx *ctx, lce_log_level level, const char *msg);
     lce_phase (*phase)(lce_mod_ctx *ctx);
 
+    /* INIT/REGISTER only. Success stages pixels for atlas application by the backend. */
     lce_status (*register_texture)(lce_mod_ctx *ctx, const lce_texture_desc *d);
     lce_status (*register_item)(lce_mod_ctx *ctx, const lce_item_desc *d);
     lce_status (*register_block)(lce_mod_ctx *ctx, const lce_block_desc *d);
@@ -659,6 +665,12 @@ typedef struct lce_api {
     int64_t (*config_int)(lce_mod_ctx *ctx, const char *key, int64_t def, int64_t min, int64_t max);
     double (*config_double)(lce_mod_ctx *ctx, const char *key, double def, double min, double max);
     const char *(*config_string)(lce_mod_ctx *ctx, const char *key, const char *def);   /* valid for the process lifetime */
+    /* API 1.12. Emit the stock colorable particle from a server event. NULL level uses
+     * the event level. rgb is 0xRRGGBB, count is 1..1000 and spread per axis is 0..64.
+     * Vanilla clients receive the effect through their normal particle
+     * packet and apply their own range, particle settings and shading. */
+    lce_status (*spawn_tinted_particles)(lce_mod_ctx *ctx, void *level, uint32_t rgb,
+                                         double x, double y, double z, uint32_t count, double spread);
 } lce_api;
 
 /* Native mod entry point (EXPERIMENTAL native mods only). Called once in

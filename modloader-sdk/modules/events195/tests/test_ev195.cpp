@@ -12,6 +12,7 @@
 #include <vector>
 #include <sys/mman.h>
 #include <functional>
+#include <limits>
 
 static int g_checks;
 #define CHECK(c) do { ++g_checks; if (!(c)) { fprintf(stderr, "FAIL %s:%d: %s\n", __FILE__, __LINE__, #c); exit(1); } } while (0)
@@ -46,7 +47,7 @@ static int sink(void *, lce_event ev, const void *pl) {
     else if (ev == LCE_EV_CHAT) { auto p=(const lce_ev_chat*)pl; e.text=p->message?p->message:""; e.player=p->player; }
     else if (ev == LCE_EV_ITEM_USE) { auto p=(const lce_ev_item_use*)pl; e.id=p->item_id; e.player=p->player;
         CHECK(p->struct_size >= sizeof(lce_ev_item_use)); e.level=p->level; e.x=p->x; e.y=p->y; e.z=p->z; e.hand=p->hand; }
-    else if (ev == LCE_EV_BLOCK_BREAK || ev == LCE_EV_BLOCK_PLACE || ev == LCE_EV_BLOCK_USE) { auto p=(const lce_ev_block*)pl; e.id=p->block_id; e.x=p->x; e.y=p->y; e.z=p->z; e.player=p->player; e.level=p->level; }
+    else if (ev == LCE_EV_BLOCK_BREAK || ev == LCE_EV_BLOCK_PLACE || ev == LCE_EV_BLOCK_USE) { auto p=(const lce_ev_block*)pl; e.id=p->block_id; e.x=p->x; e.y=p->y; e.z=p->z; e.player=p->player; e.level=p->level; e.hand=(uint32_t)p->face; e.text=lce195_ev_frame() ? "framed" : ""; }
     else if (ev == LCE_EV_BLOCK_TICK || ev == LCE_EV_BLOCK_NEIGHBOR || ev == LCE_EV_BLOCK_STEP_ON || ev == LCE_EV_BLOCK_ENTITY_INSIDE) {
         auto p=(const lce_ev_block*)pl; e.id=p->block_id; e.x=p->x; e.y=p->y; e.z=p->z; e.player=p->player; e.level=p->level;
         e.hand=(uint32_t)p->face; e.text=lce195_ev_frame() ? "framed" : ""; }
@@ -182,6 +183,16 @@ static uintptr_t g_ptype; static int32_t g_pcount; static double g_px, g_pspeed;
 static void f_send_particles(uintptr_t lvl, uintptr_t type, uint8_t ov, int32_t n, const int32_t *data, int32_t nd, double x, double, double,
                              double, double, double, double sp) {
     CHECK(lvl == image + 0x1000000 && !ov && !data && !nd); g_ptype = type; g_pcount = n; g_px = x; g_pspeed = sp; }
+static unsigned g_tinted_calls;
+static void f_send_tinted_particles(uintptr_t level, uintptr_t type, int32_t count, const int32_t *data, int32_t ndata,
+                                    double x, double y, double z, double dx, double dy, double dz, double speed,
+                                    double red, double green, double blue) {
+    CHECK(level == image + 0x1000000 && type == image + 0x13b0100);
+    CHECK(count == 7 && !data && !ndata);
+    CHECK(x == 10.5 && y == 65.0 && z == -3.5 && dx == 1.25 && dy == dx && dz == dx && speed == 0);
+    CHECK(red == 18.0 / 255 && green == 128.0 / 255 && blue == 1.0);
+    ++g_tinted_calls;
+}
 static uintptr_t f_mas(const lce195_pair *p) { g_mas_obj = p->object; uintptr_t src = image + 0x1390100; put<uintptr_t>(src, image + 0x124cb48); return src; }
 static void f_weak_lock(lce195_pair *o, uintptr_t obj, uintptr_t ctrl, int thr) {
     CHECK(thr == 0); int32_t n; memcpy(&n, (void*)(ctrl + 8), 4); if (n <= 0) return; put<int32_t>(ctrl + 8, n + 1); o->object = obj; o->control = ctrl; }
@@ -387,6 +398,21 @@ static int svc12_task(void *u, lce_event, const void *) {
       CHECK(lce195_spawn_particles(nullptr, nullptr, 77, 10.5, 65.0, -3.5, 1, 0, 0, 0, 0) == LCE_E_NOTFOUND);
       CHECK(lce195_spawn_particles(nullptr, nullptr, 30, 10.5, 65.0, -3.5, 5000, 0, 0, 0, 0) == LCE_E_INVALID);
       CHECK(lce195_spawn_particles(nullptr, (void*)(image + 0x1001000), 30, 0, 64, 0, 1, 0, 0, 0, 0) == LCE_E_PHASE);   // not the frame level
+      const uintptr_t tint_global = image + LCE195_RVA_TINTED_PARTICLE_TYPE;
+      put<uintptr_t>(tint_global, t30);
+      CHECK(lce195_spawn_tinted_particles(nullptr, nullptr, 0x1280ff, 10.5, 65.0, -3.5, 7, 1.25) == LCE_OK);
+      CHECK(lce195_spawn_tinted_particles(nullptr, (void*)(image + 0x1001000), 0, 0, 64, 0, 1, 0) == LCE_E_PHASE);
+      CHECK(lce195_spawn_tinted_particles(nullptr, nullptr, 0x1000000, 0, 64, 0, 1, 0) == LCE_E_INVALID);
+      CHECK(lce195_spawn_tinted_particles(nullptr, nullptr, 0, 0, 64, 0, 0, 0) == LCE_E_INVALID);
+      CHECK(lce195_spawn_tinted_particles(nullptr, nullptr, 0, 0, 64, 0, 1001, 0) == LCE_E_INVALID);
+      CHECK(lce195_spawn_tinted_particles(nullptr, nullptr, 0, 0, 64, 0, 1, 64.1) == LCE_E_INVALID);
+      CHECK(lce195_spawn_tinted_particles(nullptr, nullptr, 0, 0, 64, 0, 1, -1) == LCE_E_INVALID);
+      CHECK(lce195_spawn_tinted_particles(nullptr, nullptr, 0, std::numeric_limits<double>::quiet_NaN(), 64, 0, 1, 0) == LCE_E_INVALID);
+      put<uintptr_t>(tint_global, t31);
+      CHECK(lce195_spawn_tinted_particles(nullptr, nullptr, 0, 0, 64, 0, 1, 0) == LCE_E_BACKEND);
+      put<uintptr_t>(tint_global, 0);
+      CHECK(lce195_spawn_tinted_particles(nullptr, nullptr, 0, 0, 64, 0, 1, 0) == LCE_E_BACKEND);
+      CHECK(g_tinted_calls == 1);
       // mod networking: ClientboundCustomPayloadPacket to one player / everyone
       { const uint8_t blob[3] = {0xab, 1, 2}; g_conn_sent = 0;
         CHECK(lce195_send_payload(nullptr, (void*)a, "ruby:sync", blob, 3) == LCE_OK && g_pl_channel == "ruby:sync" && g_pl_len == 3 && g_pl_first == 0xab);
@@ -487,11 +513,13 @@ int main() {
     // API 1.2 natives at their RVAs carry no pinned bytes in this fake image: init must unbind them
     CHECK(lce195_services_init(&nat, &(const lce195_world_ops &)lce195_world_ops{}, &(const lce195_resolver &)lce195_resolver{nullptr, res_item, res_block}) == 1);
     CHECK(!(lce195_services_capabilities2() & (LCE_CAP2_SVC_HEAL | LCE_CAP2_SVC_FIRE | LCE_CAP2_SVC_HELD_ITEM)));
+    CHECK(!(lce195_services_capabilities2() & LCE_CAP2_SVC_TINTED_PARTICLES));
     lce195_services_reset_for_tests();
     nat.health_get = f_hget; nat.health_set = f_hset; nat.health_max = f_hmax; nat.is_alive = f_alive;
     nat.fire_clear = f_fire_clear; nat.stack_set_count = f_set_count; nat.inventory_set_changed = f_changed;
     nat.stack_max_damage = f_maxdmg; nat.stack_hurt = f_hurt; nat.stack_set_damage = f_setdmg; nat.inventory_add = f_inv_add;
     nat.player_attack_source = f_pas; nat.mob_attack_source = f_mas; nat.weak_lock = f_weak_lock; nat.send_particles = f_send_particles; nat.payload_ctor = f_payload_ctor; nat.alloc_array = fake_alloc;
+    nat.send_tinted_particles = f_send_tinted_particles;
     nat.tag_get_or_create = f_tag_goc; nat.tag_get = f_tag_get; nat.tag_remove = f_tag_remove; nat.tag_put_int = f_put_int;
     nat.tag_put_double = f_put_double; nat.tag_put_string = f_put_string;
     nat.sb_payload_ctor = f_sb_payload_ctor; nat.client_send = f_client_send;
@@ -513,6 +541,7 @@ int main() {
       CHECK(api.spawn_particles == lce195_spawn_particles && api.item_tag_get == lce195_item_tag_get && api.item_tag_set == lce195_item_tag_set &&
             api.item_tag_remove == lce195_item_tag_remove && api.send_payload == lce195_send_payload && (api.capabilities2 & LCE_CAP2_SVC_PAYLOAD) && (api.capabilities2 & (LCE_CAP2_SVC_PARTICLES | LCE_CAP2_SVC_ITEM_NBT)) == (LCE_CAP2_SVC_PARTICLES | LCE_CAP2_SVC_ITEM_NBT));
       CHECK((lce195_services_capabilities2() & (LCE_CAP2_SVC_ENTITY_NBT | LCE_CAP2_SVC_ENTITY_DATA)) == (LCE_CAP2_SVC_ENTITY_NBT | LCE_CAP2_SVC_ENTITY_DATA));
+      CHECK(api.spawn_tinted_particles == lce195_spawn_tinted_particles && (api.capabilities2 & LCE_CAP2_SVC_TINTED_PARTICLES));
 #ifdef LCE_HAVE_ENTITY_NBT_1_5
       CHECK(api.entity_nbt_get == lce195_entity_nbt_get && api.entity_data_get == lce195_entity_data_get && api.entity_data_set == lce195_entity_data_set &&
             api.entity_data_remove == lce195_entity_data_remove);
@@ -521,6 +550,10 @@ int main() {
       CHECK(api.send_to_server == lce195_send_to_server);
 #endif
     }
+    { lce_api old_api{}; old_api.struct_size = offsetof(lce_api, spawn_tinted_particles); lce195_services_fill(&old_api);
+      CHECK(!old_api.spawn_tinted_particles && !(old_api.capabilities2 & LCE_CAP2_SVC_TINTED_PARTICLES));
+      CHECK(old_api.spawn_particles == lce195_spawn_particles && (old_api.capabilities2 & LCE_CAP2_SVC_PARTICLES)); }
+    CHECK(lce195_spawn_tinted_particles(nullptr, nullptr, 0, 0, 64, 0, 1, 0) == LCE_E_PHASE);
     // alice: living entity at the frame (getHealth slot), fire timer, an inventory with 5 items in hotbar slot 2
     put<uintptr_t>(sp_vt + 0x9b8, image + 0x4244d0); put<uintptr_t>(sp_vt, image + 0x380000);
     put<uint8_t>(alice + 0x1fa, 0); put<int32_t>(alice + 0x1c0, 0);
@@ -609,6 +642,64 @@ int main() {
       lce195_ev_block_will_destroy_thunk(block, level, ppos, image + 0x12b0000, &pp);
       bool bk=false; for (auto &e:events) if (e.ev==LCE_EV_BLOCK_BREAK && e.id==253 && e.x==4 && e.y==70 && e.z==-9) bk=true;
       CHECK(bk);
+    }
+
+    // ---- block placement thunk: native +0x28 call, neighbour and replaceable cell ----
+    events.clear();
+    { struct Direction { uintptr_t opaque; int32_t index; uint8_t pad[0x50]; int32_t step[3]; };
+      static_assert(offsetof(Direction, index) == 8 && offsetof(Direction, step) == 0x5c);
+      static Direction east{0, 5, {}, {1, 0, 0}};
+      static bool replace, blocked, expected_test_only;
+      static unsigned calls;
+      static const int32_t clicked[3] = {3, 68, -11};
+      static int32_t placed[3];
+      static uintptr_t block = image + 0x11c1000, item = image + 0x1184000, state = image + 0x12b2000;
+      const uintptr_t state_vt = image + 0x1272000;
+      put<uintptr_t>(state, state_vt);
+      put<uintptr_t>(state_vt + 0x170, image + 0x3f28c0);
+      put<uintptr_t>(lvl_vt + 0x38, image + 0x3f2820);
+      static auto get_block = +[](uintptr_t s) -> uintptr_t { CHECK(s == state); return block; };
+      static auto get_state = +[](void *, const int32_t *pos) -> uintptr_t {
+          return !memcmp(pos, placed, sizeof placed) ? state : 0;
+      };
+      static auto native_use = +[](void *it, const lce195_pair *player, void *lvl, const int32_t *pos,
+                                   int hand, const void *direction, float x, float y, float z, bool test_only) -> int {
+          ++calls;
+          CHECK((uintptr_t)it == item && player->object == image + 0x1100000 && (uintptr_t)lvl == image + 0x1000000);
+          CHECK(pos == clicked && hand == 1 && x == 0.25f && y == 0.5f && z == 0.75f);
+          CHECK(direction == &east && test_only == expected_test_only);
+          if (blocked) return 2;
+          if (!test_only) {
+              const auto *face = static_cast<const Direction *>(direction);
+              for (int i = 0; i < 3; ++i) placed[i] = pos[i] + (replace ? 0 : face->step[i]);
+          }
+          return 0;
+      };
+      tramp(0x3f28c0, (const void *)get_block);
+      tramp(0x3f2820, (const void *)get_state);
+      tramp(0x7d4c0, (const void *)native_use);
+      CHECK(lce195_ev_route_block_item(item, 255, block, image + 0x7d4c0) == 1);
+      CHECK((uintptr_t)&east > UINT32_MAX);                   // regression needs nonzero high address bits
+      lce195_pair pp{alice, alice + 0x1000};
+      auto use = [&](bool test_only) {
+          return lce195_ev_block_item_use_on_thunk((void *)item, &pp, (void *)level, clicked, 1, &east,
+                                                0.25f, 0.5f, 0.75f, test_only);
+      };
+      CHECK(use(false) == 0 && calls == 1 && events.size() == 1);
+      CHECK(events[0].ev == LCE_EV_BLOCK_PLACE && events[0].id == 255 && events[0].text == "framed");
+      CHECK(events[0].player == (void *)alice && events[0].level == (void *)level && events[0].hand == 5);
+      CHECK(events[0].x == 4 && events[0].y == clicked[1] && events[0].z == clicked[2]);
+      replace = true;
+      CHECK(use(false) == 0 && calls == 2 && events.size() == 2 && events[1].x == clicked[0]);
+      expected_test_only = true;
+      CHECK(use(true) == 0 && calls == 3 && events.size() == 2);  // the earlier block is still there
+      blocked = true;
+      expected_test_only = false;
+      CHECK(use(false) == 2 && calls == 4 && events.size() == 2);
+      blocked = false;
+      put<uint8_t>(level + 0x248, 1);
+      CHECK(use(false) == 0 && calls == 5 && events.size() == 2);
+      put<uint8_t>(level + 0x248, 0);
     }
 
     // ---- block use thunk (API 1.2): Block +0x2c0, stock 0x940b0 returns false ----

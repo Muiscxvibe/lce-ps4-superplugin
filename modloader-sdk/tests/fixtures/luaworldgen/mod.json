@@ -1,0 +1,8 @@
+{
+  "format": 1,
+  "id": "luaworldgen",
+  "name": "Lua World Generation Test",
+  "version": "1.0.0",
+  "author": "tests",
+  "scripts": {"main.lua": "scripts/main.lua"}
+}

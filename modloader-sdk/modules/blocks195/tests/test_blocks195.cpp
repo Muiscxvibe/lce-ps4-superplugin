@@ -516,6 +516,10 @@ static void test_full_data_hook() {
     CHECK(U(b.object + B195_F_SPRITE) == fallback);                                             // single slot untouched
     CHECK(wout(s0 + 8) == "lcesdk_t0");
     CHECK_EQ(b195_terrain_bind(&M, atlas, 2, 256, 640, 624, 16, 2), 0);   // bound: detach first
+    g_terrain_held = 0;
+    CHECK_EQ(b195_terrain_detach(&M), 0);
+    CHECK_EQ(U(a.object + B195_F_SPRITE), s0);
+    g_terrain_held = 1;
     CHECK_EQ(b195_terrain_detach(&M), 1);
     CHECK(U(a.object + B195_F_SPRITE) == fallback && U(b.object + B195_F_FACE_SPRITES + 40) == fallback);
     CHECK_EQ(b195_terrain_bind(&M, atlas, 1, 256, 640, 624, 16, 2), 0);   // generation must grow

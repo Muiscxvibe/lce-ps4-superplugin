@@ -43,6 +43,7 @@ CODE = {
     0x1f22a0: "DamageSource::playerAttack", 0x1f2080: "DamageSource::mobAttack", 0x2871a0: "EntityDamageSource::ctor",
     0x2ba860: "EntityDamageSource deleting dtor", 0x68e60: "weak_ptr::lock (_Incref_nz)", 0x165c90: "Cat::doHurtTarget",
     0xcfd290: "ServerLevel::sendParticles", 0x18d080: "ClientboundLevelParticlesPacket::ctor", 0x526750: "ParticleType::getId",
+    0xcfd730: "ServerLevel::sendParticles (RGB)", 0x18d1a0: "ClientboundLevelParticlesPacket::ctor (RGB)",
     0x526780: "ParticleType::byId", 0x3ba900: "ItemInstance::getOrCreateTag", 0x3b7740: "ItemInstance::load", 0x3befe0: "ItemInstance::save",
     0x1b6df0: "CompoundTag::ctor", 0x1b7400: "CompoundTag::get", 0x1b8630: "CompoundTag::remove", 0x1b25e0: "CompoundTag::putInt",
     0x18ba10: "ClientboundCustomPayloadPacket::ctor", 0x18bab0: "ClientboundCustomPayloadPacket::dtor", 0xcf10a0: "handleCustomPayload",
@@ -67,6 +68,7 @@ VT = [
     (0x12782d8, 0x248, 0x424580, "LivingEntity+0x248 hurt"),
     (0x12782d8, 0xa00, 0x426600, "LivingEntity+0xa00 die"),
     (0x126e638, 0x40, 0x3aedb0, "Item+0x40 use"),
+    (0x1218a50, 0x28, 0x7d4c0, "BlockItem+0x28 useOn"),
     (0x1219f18, 0x40, 0xd7c00, "BoatItem+0x40 use (API 1.10 boat items, accepted route original)"),
     (0x1340d50, 0x1c0, 0x3f3fe0, "ServerLevel+0x1c0 playSound"),
     (0x1228438, 0, None, "ClientboundChatPacket vtable present"),
@@ -93,6 +95,14 @@ VT = [
 # exact bytes of the API 1.2 natives (same pins as services195.cpp kPins / r72 nbt_* pins)
 PINS = {0x2762a0: bytes([0xc7,0x87,0xc0,0x01,0,0,0,0,0,0,0xc3]), 0x380b70: bytes([0xff,0x87,0x38,0x01,0,0,0xc3]),
         0x940b0: bytes([0x31,0xc0,0xc3]), 0x936c0: bytes([0xc3]),
+        # ItemInstance calls useOn with a 64-bit Direction in r9 and a stack test-only flag.
+        0x3b7dd8: bytes.fromhex('4c 8b 68 28'),
+        0x3b7df4: bytes.fromhex('4c 8b 8d 20 ff ff ff c5 fa 10 85 44 ff ff ff c5 fa 10 8d 40 ff ff ff c5 fa 10 95 4c ff ff ff'),
+        0x3b7e13: bytes.fromhex('0f b6 45 10 4c 89 f7 4c 89 e6 4c 89 fa 48 89 d9 89 04 24 41 ff d5'),
+        0x7d503: bytes.fromhex('4d 89 cf'),                              # keep the full Direction pointer
+        0x7d593: bytes.fromhex('48 8b 95 50 fe ff ff 8b 4a 60 8b 42 5c 8b 52 64'), # offsets for the placement neighbour
+        0x7d78b: bytes.fromhex('8a 45 10 45 31 f6 84 c0'),              # load and test the flag
+        0x200600: bytes.fromhex('8b 47 08 c3'),                         # Direction::get3DDataValue
         0x936b0: bytes([0x48,0x8b,0x07,0x48,0x8b,0x80,0xf0,0x01,0x00,0x00,0xff,0xe0]),
         # API 1.3: stock bodies the routes require, the ticking flag accessors, the random-tick gate in tickBlocks
         0x936f0: bytes([0xc3]), 0x940c0: bytes([0xc3]), 0x94180: bytes([0xc3]), 0x3af000: bytes([0xc3]),

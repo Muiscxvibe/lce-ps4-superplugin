@@ -391,6 +391,55 @@ static uint32_t vec_len(uintptr_t v) { return (uint32_t)((Q(v + 16) - Q(v + 8)) 
 static std::string g_pkg;
 static void install(const char *id) { files[std::string("/data/lce-mods/") + id + "/mod.lcm"] = load(g_pkg + "/" + id + "/mod.lcm"); }
 
+static void scenario_lua_texture() {
+    image(); override_all();
+    install("luatexture"); boot();
+    CHECK_EQ(lce_loader_commit(g_l), LCE_OK);
+    const lce_mod_report *report = mod("luatexture");
+    CHECK(report && report->state == LCE_MOD_LIVE);
+    if (!report || report->state != LCE_MOD_LIVE) return;
+    CHECK_EQ(report->textures, 2u);
+    CHECK_EQ(report->items, 1u);
+    CHECK_EQ(report->blocks, 1u);
+
+    CHECK_EQ(lce195c_phase_blocks_hook(&g_comp), 1);
+    CHECK_EQ(item_window(), 1);
+    CHECK_EQ(g_catalog.count, 1u);
+    if (g_catalog.count != 1) return;
+    const lce195_additive_item &entry = g_catalog.entries[0];
+    CHECK(!strcmp(entry.key, "luatexture:gem"));
+    mc195_items_provider &provider = g_providers[0];
+    const uint8_t *item_pixels = provider.icon(provider.opaque, entry.icon);
+    CHECK(item_pixels != nullptr);
+    if (item_pixels) {
+        for (unsigned i = 0; i < 256; ++i) {
+            const uint8_t rgba[] = {uint8_t((i % 16) * 17), uint8_t((i / 16) * 17), 34, 255};
+            CHECK(memcmp(item_pixels + 4 * i, rgba, sizeof rgba) == 0);
+        }
+    }
+
+    CHECK_EQ(lce195c_phase_after_items(&g_comp), 1);
+    CHECK_EQ(lce195c_terrain_tiles(&g_comp), 1u);
+    uint8_t tile[16 * 16 * 4] = {};
+    CHECK_EQ(lce195c_terrain_compose(&g_comp, 16, 0, tile, sizeof tile), 1);
+    for (unsigned i = 0; i < 256; ++i) {
+        const uint8_t rgba[] = {240, uint8_t((i % 16) * 17), uint8_t((i / 16) * 17), 191};
+        CHECK(memcmp(tile + 4 * i, rgba, sizeof rgba) == 0);
+    }
+
+    const lce195c_terrain_lease outer = {[]() -> int {
+        const lce195c_terrain_lease inner = {[]() -> int { return 1; }, nullptr};
+        CHECK_EQ(lce195c_terrain_detach(&g_comp, &inner), 0);
+        return 1;
+    }, nullptr};
+    CHECK_EQ(lce195c_terrain_detach(&g_comp, &outer), 1);
+
+    lce_ev_tick tick{sizeof tick, 1};
+    lce195c_event_sink(&g_comp, LCE_EV_SERVER_TICK, &tick);
+    CHECK(logged("texture registration refused during tick"));
+    CHECK_EQ(report->textures, 2u);
+}
+
 // ============================ scenarios ======================================
 // A: full startup in the real order with retailall + rubyretail + allcontent.
 static void scenario_full() {
@@ -532,6 +581,8 @@ static void scenario_full() {
     for (int i = 0; i < 3; ++i) { lce195_ev_scope_tick(nullptr, &v); lce195_ev_scope_finish(nullptr, g_tid, 1); }
     CHECK_EQ(lce195_ev_server_ticks(), 3u);
     CHECK(logged("joined: Tester"));                                   // script PlayerJoin callback ran
+    CHECK(logged("paced tick 2 after 1 skips"));                        // paced script callback ran on its due host tick
+    CHECK(!logged("paced tick 1") && !logged("paced tick 3"));
     // cancellable CHAT: script returns true for "!cancel"
     lce_ev_chat chat{sizeof chat, (void *)g_player, "!cancel"};
     CHECK_EQ(lce195c_event_sink(&g_comp, LCE_EV_CHAT, &chat), 1);
@@ -712,6 +763,45 @@ static void scenario_no_dispatcher() {
     for (auto &s : g_order) CHECK(s != "entity_types" && s != "renderers");
     CHECK_EQ(lce195c_phase_state(&g_comp, LCE195C_PH_ENTITY_TYPES), (uint32_t)LCE195C_REFUSED);
     CHECK_EQ(lce195c_world_entry_allowed(&g_comp), 1);
+}
+
+static void scenario_lua_entity() {
+    image(); override_all();
+    g_renderers_rc = 0;
+    install("luamobs");
+    boot();
+    CHECK_EQ(lce_loader_commit(g_l), LCE_OK);
+    const lce_mod_report *r = mod("luamobs");
+    CHECK(r && r->state == LCE_MOD_LIVE);
+    const lce_plan *plan = lce_loader_plan(g_l);
+    CHECK(plan);
+    if (!plan) return;
+    const lce_entity_desc2 *d = nullptr;
+    uint32_t num_entities = 0;
+    for (uint32_t i = 0; i < plan->ext_count; ++i) {
+        if (plan->ext[i].type != LCE_EXT_ENTITY) continue;
+        ++num_entities;
+        d = (const lce_entity_desc2 *)plan->ext[i].desc;
+        CHECK(plan->ext[i].id >= 150);
+    }
+    CHECK_EQ(num_entities, 1u);
+    CHECK(d);
+    if (!d) return;
+    CHECK(!strcmp(d->key, "luamobs:grove_zombie") && !strcmp(d->base_mob, "minecraft:zombie"));
+    CHECK(d->max_health_milli == 30000 && d->move_speed_milli == 280 && d->attack_damage_milli == 4000);
+    CHECK(d->spawn_weight == 10 && d->category == LCE_MOB_MONSTER && d->min_group == 1 && d->max_group == 2);
+    CHECK(d->sound_ambient && !strcmp(d->sound_ambient, "minecraft:entity.zombie.ambient"));
+    CHECK(d->egg_primary_rgb && !d->egg_secondary_rgb);
+    CHECK(d->spawn_biome_count == 1 && d->spawn_biomes && !strcmp(d->spawn_biomes[0], "minecraft:plains"));
+    CHECK(d->goal_count == 2 && d->goals && d->goals[0].speed_milli == 1200 &&
+          d->goals[1].kind == LCE_AI_AVOID_ENTITY && d->goals[1].param && !strcmp(d->goals[1].param, "minecraft:player"));
+    lce_ev_tick tick{};
+    tick.struct_size = sizeof tick;
+    lce195c_event_sink(&g_comp, LCE_EV_SERVER_TICK, &tick);
+    CHECK(logged("late mob registration refused"));
+    CHECK_EQ(lce195c_phase_late(&g_comp), -1);
+    CHECK_EQ(lce195c_phase_state(&g_comp, LCE195C_PH_RENDERERS), (uint32_t)LCE195C_REFUSED);
+    CHECK_EQ(lce195c_world_entry_allowed(&g_comp), 0);
 }
 
 // D: block relay never fired -> BlockItems not published, and smelting the block-item fails closed later.
@@ -1045,6 +1135,52 @@ static void scenario_throwables() {
     CHECK(strstr(line, "projectiles=1") != nullptr);
 }
 
+static void scenario_lua_worldgen() {
+    image();
+    override_all();
+    install("luaworldgen");
+    boot();
+    CHECK_EQ(lce_loader_commit(g_l), LCE_OK);
+    const lce_mod_report *m = mod("luaworldgen");
+    CHECK(m && m->state == LCE_MOD_LIVE);
+    if (!m || m->state != LCE_MOD_LIVE) {
+        if (m) printf("  luaworldgen: %s\n", m->reason);
+        return;
+    }
+    CHECK_EQ(g_comp.biome_count, 1u);
+    CHECK_EQ(g_comp.feature_count, 1u);
+    CHECK_EQ(g_comp.structure_count, 1u);
+    const lce_plan *plan = lce_loader_plan(g_l);
+    int32_t biome_id = -1;
+    const lce_feature_desc *feature = nullptr;
+    for (uint32_t i = 0; i < plan->ext_count; ++i) {
+        const lce_plan_ext &ext = plan->ext[i];
+        if (ext.type == LCE_EXT_BIOME && !strcmp(ext.key, "luaworldgen:amber_grove")) biome_id = ext.id;
+        if (ext.type == LCE_EXT_FEATURE) feature = static_cast<const lce_feature_desc *>(ext.desc);
+    }
+    CHECK(biome_id >= 0 && biome_id < 256);
+    if (biome_id < 0 || biome_id >= 256 || !feature || !g_comp.feature_count) return;
+    const lce_wg195_feature &gen = g_comp.features[0].f;
+    CHECK(gen.biome_mask[biome_id >> 6] & (UINT64_C(1) << (biome_id & 63)));
+    const int32_t plains = lce_wg195_biome_lookup("minecraft:plains");
+    CHECK(plains >= 0 && plains < 256);
+    if (plains >= 0 && plains < 256) CHECK(gen.biome_mask[plains >> 6] & (UINT64_C(1) << (plains & 63)));
+    const uint16_t cells[] = {0, 2, 1, 0, 1, 2};
+    CHECK(gen.structure && !memcmp(gen.structure->cells, cells, sizeof cells));
+
+    lce_feature_desc other = *feature;
+    char error[200];
+    other.dimension = 1;
+    CHECK_EQ(g_comp.iface.check_ext(g_comp.iface.self, LCE_EXT_FEATURE, &other, error, sizeof error), LCE_E_UNSUPPORTED);
+    other.dimension = 2;
+    CHECK_EQ(g_comp.iface.check_ext(g_comp.iface.self, LCE_EXT_FEATURE, &other, error, sizeof error), LCE_E_UNSUPPORTED);
+    other.biomes = nullptr;
+    other.biome_count = 0;
+    CHECK_EQ(g_comp.iface.check_ext(g_comp.iface.self, LCE_EXT_FEATURE, &other, error, sizeof error), LCE_OK);
+    other.dimension = 3;
+    CHECK_EQ(g_comp.iface.check_ext(g_comp.iface.self, LCE_EXT_FEATURE, &other, error, sizeof error), LCE_E_INVALID);
+}
+
 // ============================ driver =======================================
 static int run(const char *name, void (*fn)()) {
     fflush(stdout);
@@ -1060,17 +1196,20 @@ static int run(const char *name, void (*fn)()) {
 int main(int argc, char **argv) {
     if (argc > 2 && !strcmp(argv[1], "--verdicts")) return verdicts(argv[2]);
     g_pkg = argc > 1 ? argv[1] : "build/pkg";
+    run("Lua texture registration to item and terrain owners", scenario_lua_texture);
     run("fuel capability binding", scenario_fuel_binding);
     run("fuel startup publication", scenario_fuel_publish);
     run("fuel installation failure blocks entry", scenario_fuel_install_failure);
     run("full startup order", scenario_full);
     run("renderers missing -> world entry blocked", scenario_renderers_fail);
     run("no renderer dispatcher -> no entity types", scenario_no_dispatcher);
+    run("Lua custom mob registration preserves renderer guard", scenario_lua_entity);
     run("block relay missed -> fail closed", scenario_blocks_missed);
     run("crafting before items -> refused", scenario_crafting_early);
     run("only refused content", scenario_allcontent_only);
     run("events/scripts unbound", scenario_no_events);
     run("effects, potions, enchantments, biomes, custom audio", scenario_registries);
+    run("Lua biome and structure world generation", scenario_lua_worldgen);
     run("shipping publisher refused the built items -> items refused", scenario_publisher_refused);
     run("API 1.9 throwables", scenario_throwables);
 #ifdef LCE_HAVE_BOATS_1_10

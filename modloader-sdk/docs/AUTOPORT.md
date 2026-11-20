@@ -326,15 +326,13 @@ Rendering, GUI, tooltip and HUD events are impossible. Registration and lifecycl
 - **The interpreter is flow-insensitive.** The last write wins and both branches of a condition contribute. Registration code is straight-line in practice; behaviour translation checks every side effect, so a branchy method is never auto-translated.
 - **SRG names** come from the official MCP archive found for the jar's MC version (§3); the built-in table is only a fallback.
 - **Metadata variants of mod items and blocks** (`setHasSubtypes`, multi-state blocks) port as one item or block, and are reported.
-- **Block shapes, block entities, GUIs, custom models and renderers, fluids, dimensions, structures and biomes** are not representable in `mod.json`, or not automatically. They are reported.
+- **Custom renderers, GUIs, fluids and dimensions** require manual work. See the detected source evidence and [API_STATUS.md](../API_STATUS.md) for the target backend.
 - **Sounds.**
   - Without `--ffmpeg` they are manual.
   - `--ffmpeg PATH` is an opt-in that decodes each event's first `.ogg` to a 16-bit mono 22 kHz WAV with a local ffmpeg. The file is copied under a generated name, and ffmpeg never sees jar paths.
   - It is **not exercised by the tests**: the test policy allows no external program other than CFR.
 - The Lua stubs are loaded by the tests in a real Lua 5.4 built from `modules/script/lua` with a mock `lce` table.
-- **Retail 1.95 today** (`--profile retail195`) loads only generic items and shaped count-1 recipes.
-  - Most ports report profile problems (exit 2) that are true of the current backend (gaps G1/G2/G4/G5).
-  - The porter keeps the full content and does not split mods automatically. Split by hand as in PORTING.md §5.
+- **Retail 1.95** (`--profile retail195`) checks the generated package against the SDK backend limits. Use the exact findings in the report to edit the generated package. Run the check again after edits.
 
 ## 6. `PORT_REPORT.md`
 
@@ -342,7 +340,8 @@ Per mod, the report has these parts:
 - a found/ported table;
 - the loader and version evidence;
 - four sections: **Ported automatically**, **Guessed (check these)**, **Needs manual work** and **Impossible on 1.95**. Every line names its evidence (class.method, registration call or file);
-- the verbatim output of `lce_modpack.py check --profile full` and `--profile retail195`, and of the build.
+- detected source resource features requiring manual work, with file evidence for dimensions, shaders and other unsupported assets;
+- the output of `lce_modpack.py check --profile full` and `--profile retail195`, and of the build.
 
 ## 7. What would need downloads (not done)
 

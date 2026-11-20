@@ -6,10 +6,12 @@ which lce_modpack.py then compiles into mod.lcm.
   lce_port.py java    <mod-root-or-jar> <out-src-dir> [--modid ID] [--hints port.json] [--shapeless-as-shaped]
   lce_port.py bedrock <behavior-pack> <resource-pack> <out-src-dir> [--hints port.json]
 
-Only DATA is converted: items, blocks, shaped/shapeless/smelting recipes,
-textures and en_us names. Java code (custom behaviour, entities, worldgen,
-GUIs) cannot be converted automatically; the converter writes PORT_REPORT.md
-listing everything it skipped or guessed so the porter can decide. Properties
+Both commands write target checks for --profile (default retail195).
+Pass --require-profile to make a failed target check affect the exit status.
+
+Only data is converted, including items, blocks, recipes, textures, English
+names, simple ore features and hinted Bedrock entity clones. PORT_REPORT.md
+lists conversion decisions and detected source features requiring manual work. Properties
 that Java mods set in code (hardness, tool kind, durability, food) come from
 the optional hints file (see PORTING.md) or fall back to documented defaults.
 
@@ -18,6 +20,7 @@ Vanilla references are translated from modern flattened names
 the table below; anything unknown is reported, never guessed silently.
 """
 import argparse
+import hashlib
 import io
 import json
 import re
@@ -29,6 +32,7 @@ from pathlib import Path
 HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE))
 import lce_modpack  # noqa: E402
+import port_compat  # noqa: E402
 
 COLORS = ['white', 'orange', 'magenta', 'light_blue', 'yellow', 'lime', 'pink', 'gray', 'light_gray', 'cyan', 'purple', 'blue',
           'brown', 'green', 'red', 'black']
@@ -187,9 +191,26 @@ WILDCARD_TAGS = {'minecraft:planks', 'minecraft:logs', 'minecraft:wool', 'minecr
 class Report:
     def __init__(self):
         self.lines = {'converted': [], 'guessed': [], 'skipped': [], 'errors': []}
+        self.source_features = []
+        self.target_profile = None
+        self.target_exit = None
+        self.target_problems = []
 
     def add(self, kind, msg):
         self.lines[kind].append(msg)
+
+    def check_target(self, manifest, srcdir, profile):
+        self.target_profile = profile
+        if profile is None:
+            return
+        try:
+            normalized = lce_modpack.validate(manifest, srcdir)
+        except lce_modpack.PackError as exc:
+            self.target_problems = str(exc).splitlines()
+            self.target_exit = 1
+            return
+        self.target_problems = lce_modpack.profile_report(normalized, profile)
+        self.target_exit = 2 if self.target_problems else 0
 
     def write(self, path, title):
         out = [f'# Port report: {title}', '']
@@ -197,7 +218,15 @@ class Report:
             out.append(f'## {k.title()} ({len(self.lines[k])})')
             out += [f'- {m}' for m in self.lines[k]] or ['- none']
             out.append('')
-        Path(path).write_text('\n'.join(out))
+        out += port_compat.report_section(self.source_features)
+        if self.target_profile is not None:
+            results = ['Package passed the SDK profile check.',
+                       'Package schema validation failed. Correct mod.json or the conversion hints.',
+                       'Package uses content outside the SDK profile. Review the flagged entries.']
+            out += [f'## Generated package check for `{self.target_profile}`', '', results[self.target_exit], '']
+            out += [f'- {problem}' for problem in self.target_problems]
+            out.append('')
+        Path(path).write_text('\n'.join(out), encoding='utf-8')
 
 
 def vanilla_ref(name, rep, where, old=False, data=None):
@@ -257,7 +286,12 @@ class Source:
 
 def save_texture(src_bytes, dst, rep, where):
     from PIL import Image
-    im = Image.open(io.BytesIO(src_bytes)).convert('RGBA')
+    try:
+        with Image.open(io.BytesIO(src_bytes)) as image:
+            im = image.convert('RGBA')
+    except (OSError, ValueError, Image.DecompressionBombError) as exc:
+        rep.add('errors', f'{where}: could not decode texture image ({type(exc).__name__})')
+        return False
     if im.size[0] != im.size[1] * 1 and im.size[1] % im.size[0] == 0:
         rep.add('guessed', f'{where}: animated strip {im.size}; using first frame')
         im = im.crop((0, 0, im.size[0], im.size[0]))
@@ -266,6 +300,7 @@ def save_texture(src_bytes, dst, rep, where):
         im = im.resize((16, 16), Image.NEAREST)
     dst.parent.mkdir(parents=True, exist_ok=True)
     im.save(dst)
+    return True
 
 
 def load_json(data):
@@ -276,11 +311,12 @@ def load_json(data):
     return json.loads(text)
 
 
-def convert_java(src_path, out, modid=None, hints=None, shapeless_as_shaped=False):
+def convert_java(src_path, out, modid=None, hints=None, shapeless_as_shaped=False, *, target_profile='retail195'):
     src = Source(src_path)
     rep = Report()
     hints = hints or {}
     names = src.names()
+    rep.source_features = port_compat.java_features(names, data_only=True)
     namespaces = sorted({n.split('/')[1] for n in names if n.startswith('assets/') and n.count('/') >= 2} - {'minecraft'})
     if modid is None:
         if len(namespaces) != 1:
@@ -334,6 +370,7 @@ def convert_java(src_path, out, modid=None, hints=None, shapeless_as_shaped=Fals
         return path.replace('_', ' ').title()
 
     textures = {}
+    texture_sources = {}
 
     def texture(ref, atlas, where):
         """'modid:item/ruby' or 'modid:items/ruby' -> texture key."""
@@ -343,16 +380,30 @@ def convert_java(src_path, out, modid=None, hints=None, shapeless_as_shaped=Fals
         if tns != ns:
             rep.add('errors', f'{where}: references texture {ref} outside the mod; vanilla textures cannot be re-used by key in API 1.0')
             return None
-        key = f'{lce_id}:{"t_" if atlas == "terrain" else "i_"}{tpath.split("/")[-1]}'
-        if key in textures:
-            return key
         file = f'assets/{ns}/textures/{tpath}.png'
+        original_stem = tpath.rsplit('/', 1)[-1]
+        stem = re.sub(r'[^a-z0-9_.-]|\.{2,}', '_', original_stem.lower()) or 'texture'
+        prefix = f'{lce_id}:{"t_" if atlas == "terrain" else "i_"}'
+        key = prefix + stem
+        if len(key) >= 64 or (key in textures and texture_sources.get(key) != file):
+            suffix = '_' + hashlib.sha256(file.encode()).hexdigest()[:12]
+            stem = stem[:63 - len(prefix) - len(suffix)] + suffix
+            key = prefix + stem
+        if key in textures:
+            if texture_sources.get(key) == file:
+                return key
+            rep.add('errors', f'{where}: texture {file} collides with generated key {key}')
+            return None
         if not src.exists(file):
             rep.add('errors', f'{where}: texture file {file} missing')
             return None
-        dst = f'textures/{atlas}/{tpath.split("/")[-1]}.png'
-        save_texture(src.read(file), out / dst, rep, file)
+        dst = f'textures/{atlas}/{stem}.png'
+        if not save_texture(src.read(file), out / dst, rep, file):
+            return None
         textures[key] = {'file': dst, 'atlas': atlas}
+        texture_sources[key] = file
+        if stem != original_stem:
+            rep.add('converted', f'{file} uses texture key {key}')
         return key
 
     def model(path):
@@ -566,7 +617,7 @@ def convert_java(src_path, out, modid=None, hints=None, shapeless_as_shaped=Fals
                 rep.add('guessed', f'{where}: shapeless emitted as a fixed shaped layout {pattern} (--shapeless-as-shaped)')
             else:
                 entry.update(type='shapeless', ingredients=ings)
-                rep.add('converted', where + ' (shapeless; the retail 1.95 backend cannot publish shapeless yet, see API_STATUS.md)')
+                rep.add('converted', where + ' (shapeless)')
             recipes.append(entry)
         elif rtype in ('smelting', 'blasting', 'smoking'):
             inp = ingredient(r.get('ingredient'), where)
@@ -584,10 +635,6 @@ def convert_java(src_path, out, modid=None, hints=None, shapeless_as_shaped=Fals
         else:
             rep.add('skipped', f'{where}: recipe type {r.get("type")} not supported (stonecutting, smithing, custom serializers)')
 
-    # Java code is never converted; flag it so nobody thinks it was.
-    classes = [n for n in names if n.endswith('.class')]
-    if classes:
-        rep.add('skipped', f'{len(classes)} Java class files: behaviour (custom item/block logic, entities, worldgen, GUIs, events) must be reimplemented natively or via the event API')
     ores = []
     placed = {}
     for n in names:
@@ -643,11 +690,12 @@ def convert_java(src_path, out, modid=None, hints=None, shapeless_as_shaped=Fals
     if 'tabs' in hints:
         manifest['tabs'] = hints['tabs']
     (out / 'mod.json').write_text(json.dumps(manifest, indent=2) + '\n')
+    rep.check_target(manifest, out, target_profile)
     rep.write(out / 'PORT_REPORT.md', f'{ns} -> {lce_id}')
     return manifest, rep
 
 
-def convert_bedrock(bp_path, rp_path, out, hints=None):
+def convert_bedrock(bp_path, rp_path, out, hints=None, *, target_profile='retail195'):
     bp, rp = Source(bp_path), Source(rp_path)
     rep = Report()
     hints = hints or {}
@@ -658,6 +706,7 @@ def convert_bedrock(bp_path, rp_path, out, hints=None):
     (out / 'textures').mkdir(parents=True)
     bpn, rpn = bp.names(), rp.names()
     manifest_bp = load_json(bp.read('manifest.json'))
+    rep.source_features = port_compat.bedrock_features(bpn, rpn, manifest_bp)
     header = manifest_bp.get('header', {})
     lang = {}
     for cand in ('texts/en_US.lang', 'texts/en_us.lang'):
@@ -699,7 +748,8 @@ def convert_bedrock(bp_path, rp_path, out, hints=None):
         for ext in ('.png', '.tga'):
             if path + ext in rpn:
                 dst = f'textures/{atlas}/{Path(path).name}.png'
-                save_texture(rp.read(path + ext), out / dst, rep, path + ext)
+                if not save_texture(rp.read(path + ext), out / dst, rep, path + ext):
+                    return None
                 textures[key] = {'file': dst, 'atlas': atlas}
                 return key
         rep.add('errors', f'{where}: texture file {path}.png missing')
@@ -872,11 +922,6 @@ def convert_bedrock(bp_path, rp_path, out, hints=None):
                     rep.add('guessed', f'{where}: furnace XP not stored by Bedrock; 0.1 assumed')
             else:
                 rep.add('skipped', f'{where}: {rtype} not supported')
-    for n in bpn:
-        if n.startswith(('features/', 'entities/')) and n.endswith('.json'):
-            continue  # converted below
-        if n.startswith(('spawn_rules/', 'feature_rules/', 'loot_tables/', 'scripts/', 'functions/')):
-            rep.add('skipped', f'{n}: no API 1.0 backend (entities/worldgen/loot/scripts/functions)')
     ores, entities = [], []
     block_keys = {b['key'] for b in blocks}
     for f in sorted(n for n in bpn if n.startswith('features/') and n.endswith('.json')):
@@ -941,6 +986,7 @@ def convert_bedrock(bp_path, rp_path, out, hints=None):
     if hints.get('textures'):
         manifest['textures'].update(hints['textures'])
     (out / 'mod.json').write_text(json.dumps(manifest, indent=2) + '\n')
+    rep.check_target(manifest, out, target_profile)
     rep.write(out / 'PORT_REPORT.md', f'{ns} (bedrock) -> {lce_id}')
     return manifest, rep
 
@@ -951,16 +997,24 @@ def main(argv=None):
     j = sub.add_parser('java'); j.add_argument('src'); j.add_argument('out'); j.add_argument('--modid'); j.add_argument('--hints')
     j.add_argument('--shapeless-as-shaped', action='store_true')
     b = sub.add_parser('bedrock'); b.add_argument('bp'); b.add_argument('rp'); b.add_argument('out'); b.add_argument('--hints')
+    for command in (j, b):
+        command.add_argument('--profile', choices=sorted(lce_modpack.PROFILES), default='retail195',
+                             help='SDK backend profile for the generated package (default retail195)')
+        command.add_argument('--require-profile', action='store_true',
+                             help='return 1 for invalid package data or 2 for an incompatible target profile')
     a = p.parse_args(argv)
     hints = json.loads(Path(a.hints).read_text()) if a.hints else None
     if a.cmd == 'java':
-        _, rep = convert_java(a.src, a.out, a.modid, hints, a.shapeless_as_shaped)
+        _, rep = convert_java(a.src, a.out, a.modid, hints, a.shapeless_as_shaped, target_profile=a.profile)
     else:
-        _, rep = convert_bedrock(a.bp, a.rp, a.out, hints)
+        _, rep = convert_bedrock(a.bp, a.rp, a.out, hints, target_profile=a.profile)
     errs = rep.lines['errors']
     print(f'wrote {a.out}/mod.json; converted {len(rep.lines["converted"])}, guessed {len(rep.lines["guessed"])}, '
-          f'skipped {len(rep.lines["skipped"])}, errors {len(errs)} (see PORT_REPORT.md)')
-    return 1 if errs else 0
+          f'skipped {len(rep.lines["skipped"])}, errors {len(errs)}, manual feature groups {len(rep.source_features)}, '
+          f'check {a.profile}={rep.target_exit} (see PORT_REPORT.md)')
+    if errs:
+        return 1
+    return rep.target_exit if a.require_profile else 0
 
 
 if __name__ == '__main__':

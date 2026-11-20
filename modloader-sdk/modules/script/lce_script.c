@@ -1,5 +1,6 @@
 /* Sandboxed Lua 5.4.8 host for LCE mods. See lce_script.h. */
 #include "lce_script.h"
+#include "../../include/lce_tick_pacing.h"
 #include <stddef.h>
 #include <string.h>
 #include <stdio.h>
@@ -32,6 +33,8 @@ struct lce_script {
     size_t mem_used, mem_cap;
     uint64_t steps, budget;
     uint32_t interval;
+    uint32_t tick_interval, tick_offset;
+    lua_Integer tick_callbacks_run, tick_callbacks_skipped;
     int dead;                 /* 1 = budget tripped / fatal: refuse all entry */
     int entered;             /* reentrancy guard (one outermost call) */
     lce_script_stats st;
@@ -128,19 +131,208 @@ static int b_register_item(lua_State *L) {
     if (rc == LCE_OK) ++s->st.items; else ++s->st.denied;
     lua_pushboolean(L, rc == LCE_OK); lua_pushinteger(L, rc); return 2;
 }
+static int block_field(lua_State *L, int table, const char *name) {
+    table = lua_absindex(L, table);
+    lua_pushstring(L, name);
+    return lua_rawget(L, table);
+}
+
+/* Borrow strings from the descriptor table until register_block copies them. */
+static const char *block_text(lua_State *L, int index, const char *field) {
+    if (lua_isnil(L, index)) return NULL;
+    size_t size;
+    luaL_checktype(L, index, LUA_TSTRING);
+    const char *text = lua_tolstring(L, index, &size);
+    if (memchr(text, '\0', size)) luaL_error(L, "register_block: %s contains a NUL byte", field);
+    return text;
+}
+
+static const char *block_text_field(lua_State *L, int table, const char *name) {
+    block_field(L, table, name);
+    const char *text = block_text(L, -1, name);
+    lua_pop(L, 1);
+    return text;
+}
+
+static uint32_t block_int(lua_State *L, int index, const char *field, uint32_t max) {
+    lua_Integer n = luaL_checkinteger(L, index);
+    if (n < 0 || (uint64_t)n > max)
+        luaL_error(L, "register_block: %s out of range", field);
+    return (uint32_t)n;
+}
+
+static uint32_t block_int_field(lua_State *L, const char *field, uint32_t max, uint32_t fallback) {
+    int type = block_field(L, 1, field);
+    uint32_t n = type == LUA_TNIL ? fallback : block_int(L, -1, field, max);
+    lua_pop(L, 1);
+    return n;
+}
+
+static int block_bool_field(lua_State *L, const char *field) {
+    if (block_field(L, 1, field) != LUA_TNIL)
+        luaL_checktype(L, -1, LUA_TBOOLEAN);
+    int value = lua_toboolean(L, -1);
+    lua_pop(L, 1);
+    return value;
+}
+
+static size_t block_array(lua_State *L, int index, const char *field, size_t min, size_t max) {
+    index = lua_absindex(L, index);
+    luaL_checktype(L, index, LUA_TTABLE);
+    size_t n = lua_rawlen(L, index);
+    if (n < min || n > max) luaL_error(L, "register_block: %s has the wrong length", field);
+    size_t entries = 0;
+    lua_pushnil(L);
+    while (lua_next(L, index)) {
+        if (!lua_isinteger(L, -2) || lua_tointeger(L, -2) < 1 ||
+            (uint64_t)lua_tointeger(L, -2) > n)
+            luaL_error(L, "register_block: %s must be a dense array", field);
+        ++entries;
+        lua_pop(L, 1);
+    }
+    if (entries != n) luaL_error(L, "register_block: %s must be a dense array", field);
+    return n;
+}
+
+static void block_faces(lua_State *L, int index, const char **faces) {
+    if (lua_isnil(L, index)) return;
+    if (lua_type(L, index) == LUA_TSTRING) {
+        const char *texture = block_text(L, index, "texture");
+        for (int f = 0; f < 6; ++f) faces[f] = texture;
+        return;
+    }
+    luaL_checktype(L, index, LUA_TTABLE);
+    static const char *const keys[] = {"down", "up", "north", "south", "west", "east"};
+    const char *all = block_text_field(L, index, "all");
+    const char *side = block_text_field(L, index, "side");
+    for (int f = 0; f < 6; ++f) {
+        faces[f] = block_text_field(L, index, keys[f]);
+        if (faces[f]) continue;
+        if (f < 2) faces[f] = block_text_field(L, index, f == 0 ? "bottom" : "top");
+        if (!faces[f]) faces[f] = f >= 2 && side ? side : all;
+    }
+}
+
+static void block_box(lua_State *L, int index, uint8_t box[6]) {
+    index = lua_absindex(L, index);
+    block_array(L, index, "box", 6, 6);
+    for (int c = 0; c < 6; ++c) {
+        lua_rawgeti(L, index, c + 1);
+        box[c] = (uint8_t)block_int(L, -1, "box coordinate", 16);
+        lua_pop(L, 1);
+    }
+    for (int c = 0; c < 3; ++c)
+        if (box[c] >= box[c + 3]) luaL_error(L, "register_block: box minima must be below maxima");
+}
+
+static size_t block_box_list(lua_State *L, int index, uint8_t *boxes) {
+    index = lua_absindex(L, index);
+    size_t n = block_array(L, index, "boxes", 1, 8);
+    for (size_t i = 0; i < n; ++i) {
+        lua_rawgeti(L, index, (lua_Integer)i + 1);
+        block_box(L, -1, boxes + i * 6);
+        lua_pop(L, 1);
+    }
+    return n;
+}
+
+static void block_shape(lua_State *L, lce_block_desc *d, uint8_t *coords) {
+    int box = block_field(L, 1, "box") != LUA_TNIL;
+    int boxes = block_field(L, 1, "boxes") != LUA_TNIL;
+    int variant_boxes = block_field(L, 1, "variant_boxes") != LUA_TNIL;
+    int rotate = block_bool_field(L, "rotate_boxes");
+    if (box + boxes + variant_boxes > 1)
+        luaL_error(L, "register_block: use one of box, boxes or variant_boxes");
+    if (rotate && (!boxes || d->variant_count != 4))
+        luaL_error(L, "register_block: rotate_boxes needs boxes and four variants");
+    if (box) {
+        d->shape = LCE_SHAPE_BOX;
+        block_box(L, -3, d->box);
+    } else if (boxes) {
+        d->box_count = (uint8_t)block_box_list(L, -2, coords);
+        d->box_sets = rotate ? d->variant_count : 1;
+        for (size_t i = d->box_count; i < (size_t)d->box_sets * d->box_count; ++i) {
+            const uint8_t *prev = coords + (i - d->box_count) * 6;
+            uint8_t *next = coords + i * 6;
+            next[0] = (uint8_t)(16 - prev[5]); next[1] = prev[1]; next[2] = prev[0];
+            next[3] = (uint8_t)(16 - prev[2]); next[4] = prev[4]; next[5] = prev[3];
+        }
+    } else if (variant_boxes) {
+        size_t sets = block_array(L, -1, "variant_boxes", 2, 16);
+        if (sets != d->variant_count)
+            luaL_error(L, "register_block: variant_boxes needs one box list per variant");
+        d->box_sets = (uint8_t)sets;
+        for (size_t v = 0; v < sets; ++v) {
+            lua_rawgeti(L, -1, (lua_Integer)v + 1);
+            size_t count = block_box_list(L, -1, coords + v * d->box_count * 6);
+            lua_pop(L, 1);
+            if (v == 0) d->box_count = (uint8_t)count;
+            if (count != d->box_count)
+                luaL_error(L, "register_block: every variant needs the same box count");
+        }
+    }
+    if (d->box_sets) {
+        d->shape = LCE_SHAPE_BOXES;
+        d->boxes = coords;
+    }
+    lua_pop(L, 3);
+}
+
 static int b_register_block(lua_State *L) {
     lce_script *s = self(L);
     luaL_checktype(L, 1, LUA_TTABLE);
+    /* Root texture and variant tables on the stack through the API call, including
+     * tables pulled from weak values. The shape parser needs at most 9 scratch slots. */
+    luaL_checkstack(L, 2 + 16 * 2 + 9, "register_block");
     lce_block_desc d; memset(&d, 0, sizeof d); d.struct_size = sizeof d;
-    d.key = opt_field(L, 1, "key", NULL);
-    d.name = opt_field(L, 1, "name", d.key);
-    d.texture[0] = opt_field(L, 1, "texture", NULL);
-    d.creative_tab = opt_field(L, 1, "creative_tab", NULL);
-    d.hardness_milli = (uint32_t)int_field(L, 1, "hardness_milli", 1500);
-    d.resistance_milli = (uint32_t)int_field(L, 1, "resistance_milli", 0);
-    d.material = (uint16_t)int_field(L, 1, "material", 0);
-    d.sound = (uint16_t)int_field(L, 1, "sound", 0);
+    d.key = block_text_field(L, 1, "key");
     if (!d.key) return luaL_error(L, "register_block: key required");
+    d.name = block_text_field(L, 1, "name");
+    if (!d.name) d.name = d.key;
+    block_field(L, 1, "texture");
+    block_faces(L, -1, d.texture);
+    d.creative_tab = block_text_field(L, 1, "creative_tab");
+    d.drop = block_text_field(L, 1, "drop");
+    d.harvest_tool = block_text_field(L, 1, "harvest_tool");
+    d.hardness_milli = block_int_field(L, "hardness_milli", UINT32_MAX, 1500);
+    d.resistance_milli = block_int_field(L, "resistance_milli", UINT32_MAX, 0);
+    d.material = (uint16_t)block_int_field(L, "material", LCE_MAT_COUNT - 1, LCE_MAT_STONE);
+    d.sound = (uint16_t)block_int_field(L, "sound", LCE_SOUND_COUNT - 1, LCE_SOUND_STONE);
+    d.light_emission = (uint8_t)block_int_field(L, "light_emission", 15, 0);
+    d.harvest_tier = (uint8_t)block_int_field(L, "harvest_tier", LCE_TIER_GOLD, LCE_TIER_NONE);
+    d.drop_min = (uint8_t)block_int_field(L, "drop_min", 64, 0);
+    d.drop_max = (uint8_t)block_int_field(L, "drop_max", 64, 0);
+    d.block_entity_slots = (uint16_t)block_int_field(L, "storage_slots", 54, 0);
+    d.placement = (uint8_t)block_int_field(L, "placement", LCE_PLACE_AXIS, LCE_PLACE_FIXED);
+    d.flammability = (uint8_t)block_int_field(L, "flammability", UINT8_MAX, 0);
+    d.slipperiness_milli = block_int_field(L, "slipperiness_milli", 1000, 0);
+    static const struct { const char *name; uint32_t flag; } flags[] = {
+        {"transparent", LCE_BLOCK_FLAG_TRANSPARENT}, {"no_item", LCE_BLOCK_FLAG_NO_ITEM},
+        {"replaceable", LCE_BLOCK_FLAG_REPLACEABLE}, {"no_collision", LCE_BLOCK_FLAG_NO_COLLIDE},
+        {"random_tick", LCE_BLOCK_FLAG_RANDOM_TICK},
+    };
+    for (size_t i = 0; i < sizeof flags / sizeof flags[0]; ++i)
+        if (block_bool_field(L, flags[i].name)) d.flags |= flags[i].flag;
+
+    const char *names[16] = {NULL};
+    const char *textures[16 * 6] = {NULL};
+    if (block_field(L, 1, "variants") != LUA_TNIL) {
+        int variants = lua_gettop(L);
+        d.variant_count = (uint8_t)block_array(L, variants, "variants", 2, 16);
+        for (int v = 0; v < d.variant_count; ++v) {
+            lua_rawgeti(L, variants, v + 1);
+            luaL_checktype(L, -1, LUA_TTABLE);
+            names[v] = block_text_field(L, -1, "name");
+            int has_texture = block_field(L, -1, "texture") != LUA_TNIL;
+            if (v == 0 && (names[v] || has_texture))
+                return luaL_error(L, "register_block: variants[1] uses the block name and texture");
+            block_faces(L, -1, textures + v * 6);
+        }
+        d.variant_names = names;
+        d.variant_textures = textures;
+    }
+    uint8_t coords[16 * 8 * 6];
+    block_shape(L, &d, coords);
     lce_status rc = s->api->register_block ? s->api->register_block(s->ctx, &d) : LCE_E_UNSUPPORTED;
     if (rc == LCE_OK) ++s->st.blocks; else ++s->st.denied;
     lua_pushboolean(L, rc == LCE_OK); lua_pushinteger(L, rc); return 2;
@@ -221,19 +413,55 @@ static int event_id(const char *name) {
     return 0;
 }
 /* registry["lce.cb"][ev] = callback */
+static void store_event_callback(lua_State *L, lce_event ev, int index) {
+    lua_getfield(L, LUA_REGISTRYINDEX, "lce.cb");
+    lua_pushvalue(L, index);
+    lua_seti(L, -2, ev);
+    lua_pop(L, 1);
+    ++self(L)->st.events;
+}
+
 static int b_subscribe(lua_State *L) {
     lce_script *s = self(L);
     const char *name = luaL_checkstring(L, 1);
     luaL_checktype(L, 2, LUA_TFUNCTION);
     int ev = event_id(name);
     if (!ev) return luaL_error(L, "subscribe: unknown event '%s'", name);
-    lua_getfield(L, LUA_REGISTRYINDEX, "lce.cb");
-    lua_pushvalue(L, 2);
-    lua_seti(L, -2, ev);
-    lua_pop(L, 1);
-    ++s->st.events;
+    store_event_callback(L, (lce_event)ev, 2);
+    if (ev == LCE_EV_SERVER_TICK) s->tick_interval = 0;
     if (s->api->subscribe) s->api->subscribe(s->ctx, (lce_event)ev, NULL, NULL);  /* host forwards via lce_script_event */
     lua_pushboolean(L, 1); return 1;
+}
+
+/* lce.subscribe_tick(interval, callback[, offset]) -> ok, status */
+static int b_subscribe_tick(lua_State *L) {
+    lce_script *s = self(L);
+    lua_Integer interval = luaL_checkinteger(L, 1);
+    luaL_checktype(L, 2, LUA_TFUNCTION);
+    lua_Integer offset = luaL_optinteger(L, 3, 0);
+    luaL_argcheck(L, interval > 0 && (uint64_t)interval <= UINT32_MAX, 1, "interval must be a positive 32-bit integer");
+    luaL_argcheck(L, offset >= 0 && offset < interval, 3, "offset must be within the interval");
+    if (!(s->api->capabilities & LCE_CAP_EV_TICK)) {
+        lua_pushboolean(L, 0);
+        lua_pushinteger(L, LCE_E_UNSUPPORTED);
+        return 2;
+    }
+    store_event_callback(L, LCE_EV_SERVER_TICK, 2);
+    s->tick_interval = (uint32_t)interval;
+    s->tick_offset = (uint32_t)offset;
+    lua_pushboolean(L, 1);
+    lua_pushinteger(L, LCE_OK);
+    return 2;
+}
+
+static int b_tick_stats(lua_State *L) {
+    lce_script *s = self(L);
+    lua_createtable(L, 0, 2);
+    lua_pushinteger(L, s->tick_callbacks_run);
+    lua_setfield(L, -2, "callbacks_run");
+    lua_pushinteger(L, s->tick_callbacks_skipped);
+    lua_setfield(L, -2, "callbacks_skipped");
+    return 1;
 }
 
 /* ---- runtime services (lce.give_item, set_block, ...) ---------------------- */
@@ -293,6 +521,49 @@ static int b_add_effect(lua_State *L) {
 /* ---- world services (API 1.1) ------------------------------------------------- */
 #define API_HAS(s, f) ((s)->api && (s)->api->struct_size >= offsetof(lce_api, f) + sizeof(void *) && (s)->api->f)
 
+/* Keep the key and binary pixel string on the Lua stack until the loader copies both. */
+static int b_register_texture(lua_State *L) {
+    lce_script *s = self(L);
+    enum { width = 16, height = 16 };
+    lce_texture_desc d = {0};
+    d.struct_size = sizeof d;
+    d.width = width;
+    d.height = height;
+
+    luaL_checktype(L, 1, LUA_TTABLE);
+    size_t key_len, atlas_len, rgba_len;
+    lua_getfield(L, 1, "key");
+    luaL_checktype(L, -1, LUA_TSTRING);
+    d.key = lua_tolstring(L, -1, &key_len);
+    if (!key_len || key_len >= LCE_MAX_KEY || memchr(d.key, '\0', key_len))
+        return luaL_error(L, "register_texture: invalid resource key");
+
+    lua_getfield(L, 1, "atlas");
+    luaL_checktype(L, -1, LUA_TSTRING);
+    const char *atlas = lua_tolstring(L, -1, &atlas_len);
+    if (atlas_len == sizeof "items" - 1 && !memcmp(atlas, "items", atlas_len)) {
+        d.atlas = LCE_TEXTURE_ITEMS;
+    } else if (atlas_len == sizeof "terrain" - 1 && !memcmp(atlas, "terrain", atlas_len)) {
+        d.atlas = LCE_TEXTURE_TERRAIN;
+    } else {
+        return luaL_error(L, "register_texture: atlas must be items or terrain");
+    }
+
+    lua_getfield(L, 1, "rgba");
+    luaL_checktype(L, -1, LUA_TSTRING);
+    d.rgba = (const uint8_t *)lua_tolstring(L, -1, &rgba_len);
+    if (rgba_len != width * height * 4)
+        return luaL_error(L, "register_texture: rgba must contain 1024 bytes");
+
+    lce_status rc = LCE_E_UNSUPPORTED;
+    if (API_HAS(s, register_texture) && (s->api->capabilities & LCE_CAP_TEXTURES))
+        rc = s->api->register_texture(s->ctx, &d);
+    if (rc != LCE_OK) ++s->st.denied;
+    lua_pushboolean(L, rc == LCE_OK);
+    lua_pushinteger(L, rc);
+    return 2;
+}
+
 /* lce.register_fuel{item="modid:item", burn_ticks=1600} */
 static int b_register_fuel(lua_State *L) {
     lce_script *s = self(L);
@@ -311,13 +582,18 @@ static int b_register_fuel(lua_State *L) {
     lua_pushboolean(L, rc == LCE_OK); lua_pushinteger(L, rc); return 2;
 }
 
-/* Values remain anchored in the argument table while the loader copies them. */
+/* Keep descriptor strings on the stack until the loader has copied them. */
+static const char *worldgen_string(lua_State *L, const char *field) {
+    luaL_checktype(L, -1, LUA_TSTRING);
+    size_t n;
+    const char *value = lua_tolstring(L, -1, &n);
+    if (memchr(value, '\0', n)) luaL_error(L, "%s contains an embedded NUL", field);
+    return value;
+}
+
 static const char *feature_string_field(lua_State *L, const char *field) {
     lua_getfield(L, 1, field);
-    if (!lua_isnil(L, -1)) luaL_checktype(L, -1, LUA_TSTRING);
-    const char *v = lua_tostring(L, -1);
-    lua_pop(L, 1);
-    return v;
+    return lua_isnil(L, -1) ? NULL : worldgen_string(L, field);
 }
 /* Worldgen descriptors are copied by register_feature during this call. */
 static int b_register_feature(lua_State *L) {
@@ -345,23 +621,254 @@ static int b_register_feature(lua_State *L) {
     lua_getfield(L, 1, "biomes");
     if (!lua_isnil(L, -1)) {
         luaL_checktype(L, -1, LUA_TTABLE);
-        lua_Integer n = luaL_len(L, -1);
-        if (n > 256) return luaL_error(L, "register_feature: at most 256 biomes");
+        int list = lua_absindex(L, -1);
+        lua_Integer n = luaL_len(L, list);
+        if (n < 0 || n > 256) return luaL_error(L, "register_feature: expected 0..256 biomes");
+        luaL_checkstack(L, (int)n + LUA_MINSTACK, "feature biome list");
         for (lua_Integer i = 0; i < n; ++i) {
-            lua_geti(L, -1, i + 1); luaL_checktype(L, -1, LUA_TSTRING); biomes[i] = lua_tostring(L, -1); lua_pop(L, 1);
+            lua_geti(L, list, i + 1);
+            biomes[i] = worldgen_string(L, "biomes entry");
         }
         d.biomes = biomes; d.biome_count = (uint32_t)n;
     }
     lce_status rc = API_HAS(s, register_feature) ? s->api->register_feature(s->ctx, &d) : LCE_E_UNSUPPORTED;
-    lua_pop(L, 1);
     if (rc != LCE_OK) ++s->st.denied;
     lua_pushboolean(L, rc == LCE_OK); lua_pushinteger(L, rc); return 2;
+}
+/* A raw read avoids executing mod code during biome and structure marshaling. */
+static void worldgen_field(lua_State *L, const char *field) {
+    lua_pushstring(L, field);
+    lua_rawget(L, 1);
+}
+static const char *worldgen_string_field(lua_State *L, const char *field, int optional) {
+    worldgen_field(L, field);
+    return optional && lua_isnil(L, -1) ? NULL : worldgen_string(L, field);
+}
+static uint32_t worldgen_integer(lua_State *L, const char *field, uint32_t min, uint32_t max) {
+    worldgen_field(L, field);
+    if (!lua_isnil(L, -1) && !lua_isinteger(L, -1)) luaL_error(L, "%s must be an integer", field);
+    lua_Integer value = lua_tointeger(L, -1);
+    lua_pop(L, 1);
+    if (value < min || value > max) luaL_error(L, "%s out of range", field);
+    return (uint32_t)value;
+}
+static uint32_t worldgen_array_size(lua_State *L, const char *field, uint32_t min, uint32_t max) {
+    luaL_checktype(L, -1, LUA_TTABLE);
+    size_t length = lua_rawlen(L, -1);
+    if (length < min || length > max) luaL_error(L, "%s has the wrong number of entries", field);
+    size_t count = 0;
+    lua_pushnil(L);
+    while (lua_next(L, -2)) {
+        if (!lua_isinteger(L, -2) || lua_tointeger(L, -2) < 1 || (size_t)lua_tointeger(L, -2) > length)
+            luaL_error(L, "%s must be a dense array", field);
+        ++count;
+        lua_pop(L, 1);
+    }
+    if (count != length) luaL_error(L, "%s must be a dense array", field);
+    return (uint32_t)count;
+}
+static uint32_t worldgen_refs(lua_State *L, const char *field, const char **refs, int optional) {
+    worldgen_field(L, field);
+    if (optional && lua_isnil(L, -1)) return 0;
+    uint32_t count = worldgen_array_size(L, field, optional ? 0 : 1, 256);
+    int array = lua_absindex(L, -1);
+    luaL_checkstack(L, (int)count + LUA_MINSTACK, "worldgen descriptor");
+    for (uint32_t i = 0; i < count; ++i) {
+        lua_rawgeti(L, array, i + 1);
+        refs[i] = worldgen_string(L, field);
+    }
+    return count;
+}
+static int b_register_biome(lua_State *L) {
+    lce_script *s = self(L);
+    luaL_checktype(L, 1, LUA_TTABLE);
+    lce_status rc = LCE_E_UNSUPPORTED;
+    if (API_HAS(s, register_biome) && (s->api->capabilities & LCE_CAP_BIOMES)) {
+        lce_biome_desc d = {0};
+        d.struct_size = sizeof d;
+        d.key = worldgen_string_field(L, "key", 0);
+        d.name = worldgen_string_field(L, "name", 1);
+        d.top_block = worldgen_string_field(L, "top_block", 1);
+        d.filler_block = worldgen_string_field(L, "filler_block", 1);
+        d.temperature_milli = worldgen_integer(L, "temperature_milli", 0, UINT32_MAX);
+        d.rainfall_milli = worldgen_integer(L, "rainfall_milli", 0, UINT32_MAX);
+        d.grass_rgb = worldgen_integer(L, "grass_rgb", 0, UINT32_MAX);
+        d.foliage_rgb = worldgen_integer(L, "foliage_rgb", 0, UINT32_MAX);
+        d.water_rgb = worldgen_integer(L, "water_rgb", 0, UINT32_MAX);
+        d.sky_rgb = worldgen_integer(L, "sky_rgb", 0, UINT32_MAX);
+        d.weight = (uint16_t)worldgen_integer(L, "weight", 0, UINT16_MAX);
+        d.height_base_milli = (uint16_t)worldgen_integer(L, "height_base_milli", 0, UINT16_MAX);
+        d.height_variation_milli = (uint16_t)worldgen_integer(L, "height_variation_milli", 0, UINT16_MAX);
+        const char *features[256];
+        d.feature_count = worldgen_refs(L, "features", features, 1);
+        d.features = d.feature_count ? features : NULL;
+        rc = s->api->register_biome(s->ctx, &d);
+    }
+    if (rc != LCE_OK) ++s->st.denied;
+    lua_pushboolean(L, rc == LCE_OK);
+    lua_pushinteger(L, rc);
+    return 2;
+}
+static int b_register_structure(lua_State *L) {
+    lce_script *s = self(L);
+    luaL_checktype(L, 1, LUA_TTABLE);
+    lce_status rc = LCE_E_UNSUPPORTED;
+    if (API_HAS(s, register_structure) && (s->api->capabilities & LCE_CAP_STRUCTURES)) {
+        lce_structure_desc d = {0};
+        d.struct_size = sizeof d;
+        d.key = worldgen_string_field(L, "key", 0);
+        /* Match the core descriptor bounds. The backend checks its own chunk limits. */
+        d.size_x = (uint16_t)worldgen_integer(L, "size_x", 1, 64);
+        d.size_y = (uint16_t)worldgen_integer(L, "size_y", 1, 64);
+        d.size_z = (uint16_t)worldgen_integer(L, "size_z", 1, 64);
+        const char *palette[256];
+        d.palette_count = worldgen_refs(L, "palette", palette, 0);
+        d.palette = palette;
+        uint32_t cells = (uint32_t)d.size_x * d.size_y * d.size_z;
+        worldgen_field(L, "blocks");
+        worldgen_array_size(L, "blocks", cells, cells);
+        int array = lua_absindex(L, -1);
+        uint16_t *blocks = lua_newuserdatauv(L, cells * sizeof *blocks, 0);
+        for (uint32_t i = 0; i < cells; ++i) {
+            lua_rawgeti(L, array, i + 1);
+            lua_Integer index = lua_tointeger(L, -1);
+            if (!lua_isinteger(L, -1) || index < 0 || index >= d.palette_count)
+                return luaL_error(L, "blocks[%I] is outside the palette index range", (lua_Integer)i + 1);
+            blocks[i] = (uint16_t)index;
+            lua_pop(L, 1);
+        }
+        d.blocks = blocks;
+        rc = s->api->register_structure(s->ctx, &d);
+    }
+    if (rc != LCE_OK) ++s->st.denied;
+    lua_pushboolean(L, rc == LCE_OK);
+    lua_pushinteger(L, rc);
+    return 2;
 }
 static lua_Integer chk_int(lua_State *L, int i, lua_Integer lo, lua_Integer hi, const char *what) {
     lua_Integer v = luaL_checkinteger(L, i);
     if (v < lo || v > hi) return luaL_error(L, "%s out of range", what);
     return v;
 }
+
+static int entity_field(lua_State *L, int table, const char *field) {
+    lua_pushstring(L, field);
+    return lua_rawget(L, table);
+}
+
+/* Keep every borrowed string on the stack until register_entity2 copies it. */
+static const char *entity_key(lua_State *L, const char *field) {
+    size_t len;
+    luaL_checktype(L, -1, LUA_TSTRING);
+    const char *key = lua_tolstring(L, -1, &len);
+    if (!len || len >= LCE_MAX_KEY || memchr(key, 0, len))
+        luaL_error(L, "register_entity: invalid %s", field);
+    return key;
+}
+
+static const char *entity_key_field(lua_State *L, int table, const char *field, int required) {
+    if (entity_field(L, table, field) != LUA_TNIL || required) return entity_key(L, field);
+    lua_pop(L, 1);
+    return NULL;
+}
+
+static uint32_t entity_number(lua_State *L, int table, const char *field, uint32_t max) {
+    if (entity_field(L, table, field) == LUA_TNIL) {
+        lua_pop(L, 1);
+        return 0;
+    }
+    if (!lua_isinteger(L, -1)) luaL_error(L, "register_entity: %s must be an integer", field);
+    uint32_t value = (uint32_t)chk_int(L, -1, 0, max, field);
+    lua_pop(L, 1);
+    return value;
+}
+
+static uint32_t entity_list(lua_State *L, int table, const char *field, uint32_t max) {
+    if (entity_field(L, table, field) == LUA_TNIL) return 0;
+    luaL_checktype(L, -1, LUA_TTABLE);
+    int list = lua_absindex(L, -1);
+    size_t len = lua_rawlen(L, list);
+    if (len > max) luaL_error(L, "register_entity: %s has too many entries", field);
+    lua_pushnil(L);
+    while (lua_next(L, list)) {
+        lua_Integer idx = lua_tointeger(L, -2);
+        if (!lua_isinteger(L, -2) || idx < 1 || (uint64_t)idx > len)
+            luaL_error(L, "register_entity: %s must be a dense array", field);
+        lua_pop(L, 1);
+    }
+    return (uint32_t)len;
+}
+
+static int b_register_entity(lua_State *L) {
+    enum { MAX_GOALS = 16, MAX_BIOMES = 256 };
+    static const char *const unsupported[] = {
+        "texture", "name", "width_milli", "height_milli", "drops",
+        "egg_primary_rgb", "egg_secondary_rgb"
+    };
+    lce_script *s = self(L);
+    luaL_checktype(L, 1, LUA_TTABLE);
+    lce_status rc = LCE_E_UNSUPPORTED;
+    if (!API_HAS(s, register_entity2)) goto done;
+    for (size_t i = 0; i < sizeof unsupported / sizeof unsupported[0]; ++i) {
+        int type = entity_field(L, 1, unsupported[i]);
+        lua_pop(L, 1);
+        if (type != LUA_TNIL) goto done;
+    }
+
+    luaL_checkstack(L, MAX_GOALS * 2 + MAX_BIOMES + 16, "register_entity descriptor");
+    lce_entity_desc2 d;
+    memset(&d, 0, sizeof d);
+    d.struct_size = sizeof d;
+    d.key = entity_key_field(L, 1, "key", 1);
+    d.base_mob = entity_key_field(L, 1, "base_mob", 1);
+    d.sound_ambient = entity_key_field(L, 1, "sound_ambient", 0);
+    d.sound_hurt = entity_key_field(L, 1, "sound_hurt", 0);
+    d.sound_death = entity_key_field(L, 1, "sound_death", 0);
+    d.max_health_milli = entity_number(L, 1, "max_health_milli", 1024000);
+    d.move_speed_milli = entity_number(L, 1, "move_speed_milli", 1024000);
+    d.attack_damage_milli = entity_number(L, 1, "attack_damage_milli", 2048000);
+    d.spawn_weight = entity_number(L, 1, "spawn_weight", UINT32_MAX);
+    d.category = (uint16_t)entity_number(L, 1, "category", LCE_MOB_AMBIENT);
+    d.min_group = (uint8_t)entity_number(L, 1, "min_group", UINT8_MAX);
+    d.max_group = (uint8_t)entity_number(L, 1, "max_group", UINT8_MAX);
+    if (entity_field(L, 1, "spawn_egg") != LUA_TNIL) {
+        luaL_checktype(L, -1, LUA_TBOOLEAN);
+        d.egg_primary_rgb = lua_toboolean(L, -1) ? 1u : 0u;
+    }
+    lua_pop(L, 1);
+
+    lce_ai_goal goals[MAX_GOALS];
+    d.goal_count = entity_list(L, 1, "goals", MAX_GOALS);
+    int list = lua_absindex(L, -1);
+    for (uint32_t i = 0; i < d.goal_count; ++i) {
+        lua_rawgeti(L, list, i + 1);
+        luaL_checktype(L, -1, LUA_TTABLE);
+        int goal = lua_absindex(L, -1);
+        goals[i].kind = (uint16_t)entity_number(L, goal, "kind", LCE_AI_AVOID_ENTITY);
+        if (!goals[i].kind) return luaL_error(L, "register_entity: goal kind required");
+        goals[i].priority = (uint16_t)entity_number(L, goal, "priority", UINT16_MAX);
+        goals[i].speed_milli = entity_number(L, goal, "speed_milli", UINT32_MAX);
+        goals[i].param = entity_key_field(L, goal, "param", 0);
+    }
+    if (d.goal_count) d.goals = goals;
+
+    const char *biomes[MAX_BIOMES];
+    d.spawn_biome_count = entity_list(L, 1, "spawn_biomes", MAX_BIOMES);
+    list = lua_absindex(L, -1);
+    for (uint32_t i = 0; i < d.spawn_biome_count; ++i) {
+        lua_rawgeti(L, list, i + 1);
+        biomes[i] = entity_key(L, "spawn_biomes entry");
+    }
+    if (d.spawn_biome_count) d.spawn_biomes = biomes;
+    rc = s->api->register_entity2(s->ctx, &d);
+
+done:
+    if (rc != LCE_OK) ++s->st.denied;
+    lua_pushboolean(L, rc == LCE_OK);
+    lua_pushinteger(L, rc);
+    return 2;
+}
+
 /* lce.set_block(level, x, y, z, block[, data]) */
 static int b_set_block(lua_State *L) {
     lce_script *s = self(L);
@@ -467,6 +974,21 @@ static int b_spawn_particles(lua_State *L) {
     if (n < 0 || n > 1000 || id < 0 || id > 0xffff) return luaL_error(L, "spawn_particles: count 0..1000, id 0..65535");
     lua_pushinteger(L, API_HAS(s, spawn_particles) ? s->api->spawn_particles(s->ctx, lv, (int32_t)id, x, y, z, (uint32_t)n, dx, dy, dz, sp)
                                                    : LCE_E_UNSUPPORTED); return 1;
+}
+#endif
+#ifdef LCE_HAVE_TINTED_PARTICLES_1_12
+/* lce.spawn_tinted_particles(level, rgb, x, y, z[, count[, spread]]) */
+static int b_spawn_tinted_particles(lua_State *L) {
+    lce_script *s = self(L);
+    void *level = opt_ptr(L, 1);
+    uint32_t rgb = (uint32_t)chk_int(L, 2, 0, 0xffffff, "rgb");
+    double x = luaL_checknumber(L, 3), y = luaL_checknumber(L, 4), z = luaL_checknumber(L, 5);
+    lua_Integer count = luaL_optinteger(L, 6, 1);
+    double spread = luaL_optnumber(L, 7, 0);
+    if (count < 1 || count > 1000) return luaL_error(L, "spawn_tinted_particles: count 1..1000");
+    lua_pushinteger(L, API_HAS(s, spawn_tinted_particles) ?
+        s->api->spawn_tinted_particles(s->ctx, level, rgb, x, y, z, (uint32_t)count, spread) : LCE_E_UNSUPPORTED);
+    return 1;
 }
 #endif
 #ifdef LCE_HAVE_NBT_1_4
@@ -785,19 +1307,26 @@ static void open_safe_libs(lua_State *L) {
 static void install_bindings(lua_State *L) {
     lua_newtable(L);                                   /* lce */
     static const luaL_Reg reg[] = {
+        {"register_texture", b_register_texture},
         {"register_fuel", b_register_fuel},
         {"register_feature", b_register_feature},
+        {"register_biome", b_register_biome}, {"register_structure", b_register_structure},
         {"register_item", b_register_item}, {"register_block", b_register_block},
         {"register_recipe", b_register_recipe}, {"register_smelting", b_register_smelting},
         {"subscribe", b_subscribe}, {"send_chat", b_send_chat}, {"give_item", b_give_item},
+        {"subscribe_tick", b_subscribe_tick}, {"tick_stats", b_tick_stats},
         {"translate", b_translate}, {"log", b_log}, {"drop_item", b_drop_item}, {"add_effect", b_add_effect},
         {"resolve_item", b_resolve_item}, {"resolve_block", b_resolve_block},
+        {"register_entity", b_register_entity},
         {"set_block", b_set_block}, {"get_block", b_get_block}, {"spawn_entity", b_spawn_entity}, {"play_sound", b_play_sound},
         {"explode", b_explode}, {"set_fire", b_set_fire}, {"heal", b_heal}, {"damage_entity", b_damage_entity},
         {"damage_held_item", b_damage_held}, {"consume_held_item", b_consume_held}, {"teleport", b_teleport},
         {"set_motion", b_set_motion},
 #ifdef LCE_HAVE_SVC_1_3
         {"spawn_particles", b_spawn_particles},
+#endif
+#ifdef LCE_HAVE_TINTED_PARTICLES_1_12
+        {"spawn_tinted_particles", b_spawn_tinted_particles},
 #endif
 #ifdef LCE_HAVE_NET_1_4
         {"register_channel", b_register_channel}, {"send_payload", b_send_payload},
@@ -1003,6 +1532,13 @@ static void push_payload(lua_State *L, lce_event ev, const void *p) {
 
 int lce_script_event(lce_script *s, lce_event ev, const void *payload) {
     if (!s || s->dead) return 0;
+    if (ev == LCE_EV_SERVER_TICK && s->tick_interval) {
+        if (!lce_tick_pacing_due((const lce_ev_tick *)payload, s->tick_interval, s->tick_offset)) {
+            if (s->tick_callbacks_skipped < LUA_MAXINTEGER) ++s->tick_callbacks_skipped;
+            return 0;
+        }
+        if (s->tick_callbacks_run < LUA_MAXINTEGER) ++s->tick_callbacks_run;
+    }
     lua_State *L = s->L;
     lua_getfield(L, LUA_REGISTRYINDEX, "lce.cb");
     lua_geti(L, -1, (lua_Integer)ev);

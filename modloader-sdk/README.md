@@ -12,8 +12,9 @@ A versioned mod API, loader, console backend, tools and docs for porting content
 ## Layout
 
 ```
-include/lce_mod_api.h          stable C ABI (1.1): descriptors, lifecycle, events, services, lce_api table
+include/lce_mod_api.h          versioned C ABI (1.12): descriptors, lifecycle, events, services, lce_api table
 include/lce_mod_package.h      mod.lcm binary format (v1)
+include/lce_tick_pacing.h      mod-local server tick pacing for native callbacks
 loader/                        core (C++17, no exceptions/RTTI/STL): package parser, ID ledger, loader, schema-driven 1.1 content
 loader/retail195/              the console backend:
   composite195.{h,cpp}           composite "retail195" backend + startup phase dispatcher
@@ -43,9 +44,9 @@ integration/verify-patch.sh /tmp/v     # base hashes, patch dry-run, compile wit
 |---|---|
 | `test_sha256`, `test_package`, `test_ledger`, `test_loader`, `test_ext`, `test_oneshot` | core: FIPS vectors, 35k package mutations, stable IDs and reserved ranges, loader lifecycle and fail-closed paths, 1.1 schemas, one-shot `.text` restore |
 | `test_retail195`, `test_retail195_bridge` | items through the items195 constructors and ABI-2 recipes on a fake image; the same provider through the **real** r72 bridge/window/catalog code |
-| `test_composite195` | 7 fork-isolated scenarios: `retailall` + `rubyretail` + `allcontent` through the loader, the composite backend and every startup phase in the console's order (block hook, item window, after-items, crafting, late startup, server tick through events195, Lua scripts), plus renderers-missing → world entry blocked, no dispatcher → no entity types, block relay missed → fail closed, crafting before items, refused-only mods, unbound events/scripts. `--verdicts` prints per-content verdicts |
-| `tests/test_tools.py` | converter, deterministic builds, profile; **the Python `retail195` profile and the C backend must agree on every key of `allcontent` and `retailall`** |
-| `make modules-test` | items195 (302 + 81 pins + 17 Unicorn), blocks195 (246), entities195 (262 + 104 pins), worldgen195 (4594 + 244 pins), events195 (53 + audit), script (49), ui195 (26), netsync195 (~11,100), server (1104). Image/venv/toolchain parts skip cleanly when absent |
+| `test_composite195` | Fork-isolated scenarios cover the startup phases, fail-closed paths, and packaged Lua registration and event dispatch. `--verdicts` prints per-content verdicts. |
+| `tests/test_tools.py` | Converter, deterministic builds, and parity between the Python `retail195` profile and the C backend, including biome filters. |
+| `make modules-test` | Backend, Lua, network and server suites. Image, virtual environment and toolchain checks can skip when their inputs are absent. |
 
 ## What works, what does not (summary; API_STATUS.md §0 is the full matrix)
 
@@ -55,9 +56,9 @@ integration/verify-patch.sh /tmp/v     # base hashes, patch dry-run, compile wit
   - effects and potions: **new status effects** (strings195 + effects195), **new potion types** with splash/lingering/arrow forms, brewing between stock **and mod** potions;
   - **new enchantments** (enchants195);
   - world: opaque blocks (data hook), entity clones (types, AI, spawns, eggs, renderers), ores/trees/lakes/structures, **new overworld biomes** (biomes195);
-  - audio and visuals: sound clones, **custom audio from WAV** (audio195), particle clones;
+  - audio and visuals: sound clones, **custom audio from WAV** (audio195), and tinted stock particles from event callbacks;
   - localisation, including mod string ids in the game's Localizer;
-  - Lua scripts (with `EffectTick`), services, commands/keybinds, multiplayer item/block ID sync.
+  - Lua scripts with texture, block, mob, biome and structure registration, server tick pacing, services, commands/keybinds, and multiplayer item/block ID sync.
 - **Experimental fuel:** custom fuel is opt-in. A PS4 test verified manually placed inline and explicit custom fuels in a furnace, including save and reload. Hopper and Quick Move behavior remain unverified. See [INTEGRATION.md](INTEGRATION.md) for the build flag, profile and limitations.
 - **Not possible on 1.95 yet (refused with the reason):**
   - dimensions, custom mob skins and loot, custom armour layers, native screens/menus;

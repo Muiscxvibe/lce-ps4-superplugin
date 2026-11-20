@@ -60,6 +60,10 @@ int bm_zero(void *) { return 0; }
 // terrain (gap G1): shared_terrain_195 hands its reload-lease attestations in for the duration of a bind/detach call
 const lce195c_terrain_lease *g_tlease;
 uint32_t g_terrain_binds, g_terrain_gen; int g_terrain_rc;
+bool acquire_terrain_lease(const lce195c_terrain_lease *lease) {
+    const lce195c_terrain_lease *empty = nullptr;
+    return __atomic_compare_exchange_n(&g_tlease, &empty, lease, false, __ATOMIC_ACQ_REL, __ATOMIC_ACQUIRE);
+}
 int bm_terrain_held(void *) { const lce195c_terrain_lease *l = __atomic_load_n(&g_tlease, __ATOMIC_ACQUIRE); return l && l->held && l->held() == 1 ? 1 : 0; }
 int bm_uploaded(void *, uintptr_t atlas, uintptr_t tex, uint32_t gen) {
     const lce195c_terrain_lease *l = __atomic_load_n(&g_tlease, __ATOMIC_ACQUIRE);
@@ -187,7 +191,7 @@ lce_status check_recipe(void *self, const lce_recipe_desc *d, char *err, uint32_
 lce_status check_block(void *self, const lce_block_desc *d, char *err, uint32_t cap) {
     lce195c *c = (lce195c *)self;
     if (!c->bind.blocks) { set_err(err, cap, "retail195: blocks195 natives not bound in this build"); return LCE_E_UNSUPPORTED; }
-    return b195_backend_check_block(nullptr, d, err, cap);   // storage blocks: 9 slots (DispenserBlockEntity), others refused there
+    return b195_backend_check_block(nullptr, d, err, cap);
 }
 
 lce_status check_feature(const lce_feature_desc *d, char *err, uint32_t cap) {
@@ -196,9 +200,24 @@ lce_status check_feature(const lce_feature_desc *d, char *err, uint32_t cap) {
     if ((d->kind == LCE_FEATURE_ORE || d->kind == LCE_FEATURE_TREE || d->kind == LCE_FEATURE_LAKE) && !d->block) { set_err(err, cap, "worldgen195: feature needs a block"); return LCE_E_INVALID; }
     if (d->kind == LCE_FEATURE_TREE && !d->block2) { set_err(err, cap, "worldgen195: a tree needs block2 (leaves)"); return LCE_E_INVALID; }
     if (d->kind == LCE_FEATURE_STRUCTURE && !d->structure) { set_err(err, cap, "worldgen195: a structure feature needs a structure"); return LCE_E_INVALID; }
+    for (uint32_t i = 0; i < d->biome_count; ++i) {
+        const char *key = d->biomes[i];
+        if (!strncmp(key, "minecraft:", 10)) {
+            if (lce_wg195_biome_lookup(key) < 0) {
+                snprintf(err, cap, "worldgen195: unknown biome %s", key);
+                return LCE_E_NOTFOUND;
+            }
+        } else if (d->dimension != 0) {
+            set_err(err, cap, "worldgen195: custom biomes are generated only in the Overworld");
+            return LCE_E_UNSUPPORTED;
+        }
+    }
+    // The loader has checked custom biome keys. Their IDs are available during prepare.
+    lce_feature_desc base = *d;
+    base.biomes = nullptr;
+    base.biome_count = 0;
     lce_wg195_feature f;
-    // dry run with a placeholder block id: validates kind, sizes, y range, rarity, biome keys
-    lce_status st = lce_wg195_from_desc(d, 1, 0, 0, -1, &f, err, cap);
+    lce_status st = lce_wg195_from_desc(&base, 1, 0, 0, -1, &f, err, cap);
     if (st != LCE_OK) return st;
     if (d->kind == LCE_FEATURE_TREE && (d->size && (d->size < 3 || d->size > 8))) { set_err(err, cap, "worldgen195: tree base height (size) must be 3..8"); return LCE_E_INVALID; }
     if (d->kind == LCE_FEATURE_LAKE && d->min_y && d->min_y < 6) { set_err(err, cap, "worldgen195: lakes need min_y >= 6"); return LCE_E_INVALID; }
@@ -291,8 +310,22 @@ lce_status prepare_features(lce195c *c, const lce_plan *p, char *err, uint32_t c
         int32_t b = d->block ? block_id(p, d->block) : 0, b2 = d->block2 ? block_id(p, d->block2) : 0;
         if (b < 0 || b > 365 || b2 < 0 || b2 > 365) { snprintf(err, cap, "worldgen195: feature %s: block not resolvable", d->key); return LCE_E_NOTFOUND; }
         int32_t replace = d->kind == LCE_FEATURE_ORE && d->block2 ? b2 : 0;
-        lce_status st = lce_wg195_from_desc(d, (uint16_t)b, 0, replace, replace ? 0 : -1, &cf.f, err, cap);
+        lce_feature_desc base = *d;
+        base.biomes = nullptr;
+        base.biome_count = 0;
+        lce_status st = lce_wg195_from_desc(&base, (uint16_t)b, 0, replace, replace ? 0 : -1, &cf.f, err, cap);
         if (st != LCE_OK) return st;
+        for (uint32_t j = 0; j < d->biome_count; ++j) {
+            const char *key = d->biomes[j];
+            int32_t id = -1;
+            if (!strncmp(key, "minecraft:", 10)) id = lce_wg195_biome_lookup(key);
+            else if (const lce_plan_ext *biome = find_ext(p, LCE_EXT_BIOME, key); biome && biome->desc) id = biome->id;
+            if (id < 0 || id >= 256) {
+                snprintf(err, cap, "worldgen195: feature %s: biome %s unresolved", d->key, key);
+                return LCE_E_NOTFOUND;
+            }
+            cf.f.biome_mask[id >> 6] |= UINT64_C(1) << (id & 63);
+        }
         if (d->kind == LCE_FEATURE_TREE) { cf.trunk_id = (uint16_t)b; cf.leaves_id = (uint16_t)b2; if (d->size) cf.f.tree_base_height = d->size; }
         if (d->kind == LCE_FEATURE_LAKE) cf.lake_id = (uint16_t)b;
         if (d->kind == LCE_FEATURE_STRUCTURE) {
@@ -654,7 +687,7 @@ int worldgen_publish(lce195c *c) {
 extern "C" uint32_t lce195c_capabilities(const lce195c *c) {
     if (!c) return 0;
     uint32_t caps = lce195_backend_caps(&c->items);
-    if (c->bind.blocks) caps |= LCE_CAP_BLOCKS | LCE_CAP_BLOCK_ENTITY;   // 9-slot storage blocks (blocks195)
+    if (c->bind.blocks) caps |= LCE_CAP_BLOCKS | LCE_CAP_BLOCK_ENTITY;   // dispenser- and chest-backed blocks (blocks195)
     if (c->bind.entities) caps |= LCE_CAP_ENTITIES;
     if (c->bind.worldgen) caps |= LCE_CAP_WORLDGEN | LCE_CAP_STRUCTURES;
     if (c->bind.event_caps) caps |= c->bind.event_caps | LCE_CAP_SOUNDS;   // sound clones: services195 play_sound / registry
@@ -972,7 +1005,9 @@ extern "C" void lce195c_status_line(const lce195c *c, char *out, uint32_t cap) {
     for (uint32_t i = 1; i < LCE195C_PH_COUNT && n < cap; ++i) n += (size_t)snprintf(out + n, cap - n, " %s=%u", kPhaseName[i], c->phase[i]);
     if (n < cap) n += (size_t)snprintf(out + n, cap - n, " world_entry=%u", c->world_entry);
     if (n < cap && c->has_blocks)
-        snprintf(out + n, cap - n, " terrain_tiles=%u binds=%u rc=%d gen=%u", b195_terrain_tile_count(&g_blocks), g_terrain_binds, g_terrain_rc, g_terrain_gen);
+        snprintf(out + n, cap - n, " terrain_tiles=%u binds=%u rc=%d gen=%u", b195_terrain_tile_count(&g_blocks),
+                 __atomic_load_n(&g_terrain_binds, __ATOMIC_RELAXED), __atomic_load_n(&g_terrain_rc, __ATOMIC_RELAXED),
+                 __atomic_load_n(&g_terrain_gen, __ATOMIC_RELAXED));
 }
 
 // ---- events + scripts -------------------------------------------------------
@@ -1026,17 +1061,17 @@ extern "C" int lce195c_terrain_compose(const lce195c *c, uint32_t tile_size, uns
 }
 extern "C" int lce195c_terrain_bind(lce195c *c, const lce195c_terrain_lease *l, uintptr_t atlas, uint32_t generation, uint32_t width,
                                     uint32_t height, uint32_t stock_height, uint32_t tile_size, uint32_t first_index) {
-    if (!lce195c_terrain_tiles(c) || !l || !l->held || !l->uploaded) return 0;
-    __atomic_store_n(&g_tlease, l, __ATOMIC_RELEASE);
+    if (!lce195c_terrain_tiles(c) || !l || !l->held || !l->uploaded || !acquire_terrain_lease(l)) return 0;
     int rc = b195_terrain_bind(&g_blocks, atlas, generation, width, height, stock_height, tile_size, first_index);
+    __atomic_add_fetch(&g_terrain_binds, 1, __ATOMIC_RELAXED);
+    __atomic_store_n(&g_terrain_rc, rc, __ATOMIC_RELAXED);
+    __atomic_store_n(&g_terrain_gen, generation, __ATOMIC_RELAXED);
     __atomic_store_n(&g_tlease, (const lce195c_terrain_lease *)nullptr, __ATOMIC_RELEASE);
-    ++g_terrain_binds; g_terrain_rc = rc; g_terrain_gen = generation;
     return rc;
 }
 extern "C" int lce195c_terrain_detach(lce195c *c, const lce195c_terrain_lease *l) {
     if (!c || !c->has_blocks) return 1;
-    if (!l || !l->held) return 0;
-    __atomic_store_n(&g_tlease, l, __ATOMIC_RELEASE);
+    if (!l || !l->held || !acquire_terrain_lease(l)) return 0;
     int rc = l->held() == 1 ? b195_terrain_detach(&g_blocks) : 0;
     __atomic_store_n(&g_tlease, (const lce195c_terrain_lease *)nullptr, __ATOMIC_RELEASE);
     return rc;

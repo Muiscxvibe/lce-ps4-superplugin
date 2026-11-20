@@ -175,7 +175,8 @@ void lce195c_status_line(const lce195c *c, char *out, uint32_t cap);
 /* ---- terrain atlas (gap G1) ----
  * shared_terrain_195/runtime.cpp appends the SDK block tiles after its two fixed tiles (first_index 2) and calls
  * bind/detach inside its reload lease; `held`/`uploaded` are that runtime's own attestations and are used only
- * during the call. bind: 1 bound, 0 refused before any write (faces keep the stock fallback), -1 uncertain.
+ * during the call. A second bind or detach while one is in progress is refused.
+ * bind: 1 bound, 0 refused before any write (faces keep the stock fallback), -1 uncertain.
  * detach: 1 detached or nothing bound, 0/-1 refused or uncertain (fails the reload). */
 typedef struct lce195c_terrain_lease {
     int (*held)(void);

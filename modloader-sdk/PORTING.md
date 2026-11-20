@@ -2,14 +2,14 @@
 
 `tools/lce_port.py` turns the **data** of a simple content mod into an SDK source package: `mod.json` plus 16×16 textures. `tools/lce_modpack.py` then compiles that into `mod.lcm`, as described in [MODDING.md](MODDING.md).
 
-The converter never translates Java bytecode or Bedrock scripts. It writes `PORT_REPORT.md`, which lists everything it converted, guessed or skipped, so nothing is silently lost.
+The data importer writes `PORT_REPORT.md` with conversion decisions, detected features requiring manual work, and the selected SDK backend profile result. It reports file evidence for features such as shaders, dimensions, Bedrock scripts and resource-pack visuals. For Java bytecode patterns, also see the [advanced JAR importer](docs/AUTOPORT.md).
 
 ```
  Java mod (.jar or folder)        Bedrock add-on (BP + RP)
             \                         /
              lce_port.py java / bedrock          -> out/<id>/mod.json, textures/, PORT_REPORT.md
                           |
-             lce_modpack.py check  (--profile retail195)
+             lce_modpack.py check  (repeat after editing the port)
                           |
              lce_modpack.py build  -> <id>/mod.lcm  -> /data/lce-mods/<id>/
 ```
@@ -29,13 +29,14 @@ The input can be a `.jar`/`.zip` or an unpacked folder.
 | `META-INF/mods.toml`, `neoforge.mods.toml`, `fabric.mod.json`, `mcmod.info` | name, version, author, description | the version is reduced to dotted digits |
 | `assets/<ns>/lang/en_us.json` or `en_US.lang` | item and block names (`lang.en_US`) | keys `item.<ns>.<x>`, `block.<ns>.<x>`, legacy `item.<x>.name` |
 | `assets/<ns>/models/item/<x>.json` with `layer0` | **item** `<id>:<x>` with its icon | `layer1` overlays are dropped (reported); 3D/custom models are skipped |
-| `assets/<ns>/blockstates/<x>.json` (one variant) + `models/block/*.json` (`cube_all`, or `top`/`bottom`/`side`, or `end`/`side`) | **block** `<id>:<x>` with faces | multipart/rotating/connected blocks (stairs, fences, panes) are skipped. Slab-like vanilla bases (slab, carpet, pressure plate, snow layer, cake, enchanting table, daylight detector) and a constant `getBoundingBox`/`getShape` box (`new AxisAlignedBB`, `Block.makeCuboidShape`/`box`, `VoxelShapes.create`) become `"box"`; a branching shape method is reported. Metadata block variants are written by hand as `"variants"` (MODDING.md) |
+| `assets/<ns>/blockstates/<x>.json` (one variant) + `models/block/*.json` (`cube_all`, or `top`/`bottom`/`side`, or `end`/`side`) | **block** `<id>:<x>` with faces | Multipart and multivariant block states require manual work. The advanced JAR importer recognizes additional shapes from Java bytecode. |
 | `assets/<ns>/textures/**.png` | 16×16 RGBA | larger images are downscaled; animated strips use frame 0 (reported) |
 | `data/<ns>/recipe[s]/*.json`: `crafting_shaped` | shaped recipe | |
 | …`crafting_shapeless` | shapeless recipe | `--shapeless-as-shaped` writes a fixed layout instead (reported) |
 | …`smelting`, `blasting`, `smoking` | furnace recipe | blasting/smoking become furnace; duplicate inputs are skipped |
 | other recipe types (stonecutting, smithing, custom serializers) | skipped | |
-| `data/<ns>/worldgen/**`, `forge/biome_modifier/**`, sounds, `*.class` | skipped, listed | behaviour must be re-implemented |
+| `data/<ns>/worldgen/configured_feature/*.json` and matching placed features | simple ore features | Review the generated placement and block references. |
+| Other worldgen, dimension and rendering files, Java code | manual work reported for recognized files | Review `PORT_REPORT.md` for evidence and porting guidance. |
 
 Things Java mods set **in code** (hardness, tool tier, durability, food values, harvest level) are not in the data files. Supply them in a hints file (§3). Otherwise the converter uses these defaults and lists each guess:
 - blocks: stone-like, hardness 1.5;
@@ -55,7 +56,8 @@ python3 tools/lce_port.py bedrock path/to/BP path/to/RP build/port/mymod [--hint
 | `BP/items/*.json` with `minecraft:icon` + `RP/textures/item_texture.json` | items; `minecraft:max_stack_size`, `minecraft:food` (nutrition, saturation, can_always_eat), `minecraft:durability` (becomes a tool), `minecraft:foil`/`glint` |
 | `BP/blocks/*.json` with `minecraft:material_instances` + `terrain_texture.json` | blocks; `destructible_by_mining.seconds_to_destroy` becomes hardness, `destructible_by_explosion.explosion_resistance`, `light_emission` |
 | `BP/recipes/*.json`: `recipe_shaped`, `recipe_shapeless` (ingredient `count` expands), `recipe_furnace` (tag `furnace`) | recipes / smelting |
-| `entities/`, `spawn_rules/`, `features/`, `feature_rules/`, `loot_tables/`, `scripts/`, `functions/` | skipped, listed |
+| `entities/`, `features/` | Entity clones when a base mob is supplied in hints, and simple ore features |
+| `spawn_rules/`, `feature_rules/`, `loot_tables/`, `scripts/`, `functions/` | Reported for manual work |
 
 Blocks with states, permutations or custom geometry (other than a full block) are skipped or reported.
 
@@ -115,13 +117,11 @@ Common tags (`#minecraft:planks`, `#forge:ingots/iron`, `#c:iron_ingots`, `#forg
 - A worldgen feature.
 
 ```sh
-$ python3 tools/lce_port.py java examples/java-rubymod/src build/port/rubymod --hints examples/java-rubymod/hints.json
-wrote build/port/rubymod/mod.json; converted 14, guessed 1, skipped 2, errors 0 (see PORT_REPORT.md)
-$ python3 tools/lce_modpack.py build build/port/rubymod build/pkg
-built build/pkg/rubymod/mod.lcm (6820 bytes, …)
+python3 tools/lce_port.py java examples/java-rubymod/src build/port/rubymod --hints examples/java-rubymod/hints.json
+python3 tools/lce_modpack.py build build/port/rubymod build/pkg
 ```
 
-The report skips the duplicate blasting recipe and the worldgen file, maps `#forge:rods/wooden` to `minecraft:stick` and `minecraft:white_wool` to `minecraft:wool@0`.
+The report records a duplicate blasting recipe, a converted ore feature and two ingredient mappings. The default target check flags the block harvest tiers.
 
 The tests then:
 - parse the package in C and fuzz it with 20,000 mutations (`test_package`);
@@ -130,34 +130,30 @@ The tests then:
 
 `examples/bedrock-sapphire` is the Bedrock equivalent: one item, one block, shaped and shapeless recipes, and an entity that is reported as skipped. It ports to mod ID `gem`.
 
-### Making a port that loads on today's console
+### Checking backend compatibility
 
-Run `check` with the retail profile:
+The importer checks the generated package against `retail195` by default. Select a different profile using `--profile`. The `full` profile checks the package schema and `retail195-experimental-fuel` checks against a fuel-enabled SDK build.
 
 ```sh
-python3 tools/lce_modpack.py check build/port/rubymod --profile retail195
+python3 tools/lce_port.py bedrock examples/bedrock-sapphire/BP examples/bedrock-sapphire/RP build/port/gem --require-profile
+python3 tools/lce_modpack.py check build/port/gem --profile retail195
 ```
 
-It prints every problem (blocks, smelting, food/pickaxe kinds, shapeless/count-9 recipes, a `wool@14` ingredient, a vanilla output). The usual fix is to split the mod:
-
-- **`rubymod_items`:** generic items plus shaped count-1 recipes. This loads today (see `tests/fixtures/rubyretail`, which runs through the real shipping item bridge in `test_retail195_bridge`).
-- **`rubymod_world`:** blocks, ores, smelting and tools. It loads once G1, G2 and G5 land, with `"dependencies": {"rubymod_items": "1.0"}`.
-
-Keys and IDs stay stable across the split, so ship the items mod first and keep its keys.
+With `--require-profile`, the importer exits 1 for conversion or schema errors and 2 for incompatible profile content. It still writes the editable package and report. Without that option, the exit code reflects conversion errors. Review the reported source features in both cases. A profile pass covers the generated package, and [API_STATUS.md](API_STATUS.md) tracks runtime and console verification.
 
 ## 6. Porting behaviour (code)
 
 Data conversion covers what Workshop/Forge mods declare. Behaviour needs one of these, in order of availability:
 
-1. **Native C API events** (MODDING.md §8): tick, item use, block break, world load. These need gap G3 (small: the console scopes already exist).
-2. **Lua scripts** on the existing Lua 5.4 runtime, mapping Workshop `register*` calls onto `lce_api` (gap G15).
+1. **Native C API events.** For native ports, compare the API major, check `api->struct_size` before accessing appended fields, and check the applicable `capabilities` or `capabilities2` flags and callback pointer before calling a service. See [the public API header](include/lce_mod_api.h).
+2. **Lua scripts.** Implement supported events and services with the Lua 5.4 runtime. See [MODDING.md](MODDING.md).
 3. **New backends.** Effects, potions, enchantments, biomes and custom audio now publish on retail 1.95 (strings195, effects195, enchants195, biomes195, audio195; API_STATUS.md §0).
    - `lce_autoport.py` emits them with these heuristics:
      - enchantment classes extending the damage/protection/impaler enchantments, or overriding their bonus methods, get `clone_of` sharpness/protection/impaling;
      - instant and attack-damage effect classes get an instant or strength/weakness clone;
      - per-tick effect code becomes an `EffectTick` Lua stub;
      - `.ogg` sounds become 16-bit mono WAV with `--ffmpeg`.
-   - Still open: UI (G12), fuel (G18), and the per-type limits in §0.
+   - See [API_STATUS.md](API_STATUS.md) for UI status, experimental fuel and per-type limits.
 4a. **Boat items (API 1.10).** `ItemBoat`/`BoatItem` subclasses and instances become `"boat"` with the wood type read from the `EntityBoat.Type`/`Boat.Type` constant in the constructor. Types 1.95 lacks (mangrove, cherry, bamboo, pale oak, mod woods) are ported as oak (guessed); chest boats are reported as manual (no chest boats in 1.95).
 4. **Thrown items (API 1.9).** `lce_autoport.py` detects an item `onItemRightClick`/`use` that creates an `EntityThrowable` / `ThrowableEntity` / `ThrowableItemProjectile` / snowball-class entity. It writes `"throwable"` on the item:
    - `speed`/`inaccuracy` come from the `shoot`/`setHeadingFromThrower`/`shootFromRotation` call;

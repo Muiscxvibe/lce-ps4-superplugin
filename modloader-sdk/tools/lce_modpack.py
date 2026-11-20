@@ -249,13 +249,18 @@ def validate(m, srcdir, resize=False):
     if m.get('version') and not re.match(r'^[0-9]+(\.[0-9]+){0,3}$', m['version']):
         err('version must be dotted digits, e.g. 1.0.0')
 
-    def own(key, what):
+    def own(key, what, keys=None):
         if not isinstance(key, str) or not KEY_RE.match(key) or len(key) >= 64 or '..' in key:
             err(f'{what}: invalid key {key!r}')
             return False
         if not key.startswith(modid + ':'):
             err(f'{what}: key {key!r} must start with "{modid}:"')
             return False
+        if keys is not None:
+            if key in keys:
+                err(f'duplicate {what} key {key}')
+                return False
+            keys.add(key)
         return True
 
     textures = {}
@@ -276,9 +281,10 @@ def validate(m, srcdir, resize=False):
         textures[key] = (ATLASES[atlas][0], rgba, size)
 
     item_keys = set()
+    block_keys = set()
     blocks = []
     for b in m.get('blocks') or []:
-        if not own(b.get('key'), 'block'):
+        if not own(b.get('key'), 'block', block_keys):
             continue
         def face_list(tex):
             if isinstance(tex, str):
@@ -369,11 +375,13 @@ def validate(m, srcdir, resize=False):
             item_keys.add(b['key'])
 
     items = []
+    declared_items = set()
     for it in m.get('items') or []:
-        if not own(it.get('key'), 'item'):
+        if not own(it.get('key'), 'item', declared_items):
             continue
-        if it['key'] in item_keys:
+        if it['key'] in block_keys:
             err(f'item {it["key"]}: key already used by a block')
+            continue
         tex = it.get('texture')
         if tex not in textures or textures[tex][0] != 0:
             err(f'item {it["key"]}: texture {tex!r} missing or not an items texture')
@@ -484,8 +492,9 @@ def validate(m, srcdir, resize=False):
             err(f'block {b["key"]}: unknown drop {b["drop"]!r}')
 
     tabs = []
+    tab_keys = set()
     for t in m.get('tabs') or []:
-        if not own(t.get('key'), 'tab'):
+        if not own(t.get('key'), 'tab', tab_keys):
             continue
         if not ref_ok(t.get('icon')):
             err(f'tab {t["key"]}: unknown icon item {t.get("icon")!r}')
@@ -493,7 +502,6 @@ def validate(m, srcdir, resize=False):
         if not creative and not crafting:
             err(f'tab {t["key"]}: must be creative and/or crafting')
         tabs.append(dict(key=t['key'], name=t.get('name') or t['key'], icon=t.get('icon'), creative=creative, crafting=crafting))
-    tab_keys = {t['key'] for t in tabs}
 
     def tab_ok(key, crafting):
         if key is None:
@@ -509,11 +517,8 @@ def validate(m, srcdir, resize=False):
     recipes = []
     seen = set()
     for r in m.get('recipes') or []:
-        if not own(r.get('key'), 'recipe'):
+        if not own(r.get('key'), 'recipe', seen):
             continue
-        if r['key'] in seen:
-            err(f'duplicate recipe key {r["key"]}')
-        seen.add(r['key'])
         kind = r.get('type', 'shaped')
         cells = [(None, 0)] * 9
         if kind == 'shaped':
@@ -572,9 +577,10 @@ def validate(m, srcdir, resize=False):
         recipes.append(dict(key=r['key'], w=w, h=h, shapeless=shapeless, cells=cells, result=res, count=count, aux=raux, tab=r.get('craft_tab')))
 
     smelts = []
+    smelt_keys = set()
     inputs = set()
     for s in m.get('smelting') or []:
-        if not own(s.get('key'), 'smelting'):
+        if not own(s.get('key'), 'smelting', smelt_keys):
             continue
         try:
             ik, iaux = parse_ingredient(s.get('input'))
@@ -668,6 +674,7 @@ def validate_ext(m, modid, srcdir, textures, item_keys, block_keys, deps, err):
         return key in own.get(section, set())
 
     for sec, (tid, fields) in XS.SCHEMAS.items():
+        seen = set()
         for e in sections[sec]:
             where = f'{sec[:-1]} {e.get("key", e.get("item", "?"))}'
             vals = {}
@@ -767,6 +774,13 @@ def validate_ext(m, modid, srcdir, textures, item_keys, block_keys, deps, err):
             except (ValueError, KeyError, IndexError, OSError) as ex:
                 err(f'{where}: {ex}')
                 continue
+            # The native registrar also tracks fuel by item; keyed sections
+            # have independent registries, so cross-section names can repeat.
+            key = vals['item'] if sec == 'fuels' else vals['key']
+            if key in seen:
+                err(f'{where}: duplicate {"fuel item" if sec == "fuels" else "key"}')
+                continue
+            seen.add(key)
             out.append((tid, sec, vals))
     return out
 
@@ -1139,6 +1153,8 @@ def retail195_verdicts(n, *, fuel=False):
             why = 'harvest tiers above wood are hard-coded per block'
         elif b['tool'] and not ((b['tool'] == 'pickaxe' and rock) or (b['tool'] == 'axe' and b['material'] == 1)):
             why = 'harvest tool must follow the material (pickaxe: stone/metal, axe: wood)'
+        elif b['hardness'] > 1_000_000 or b['resistance'] > 10_000_000:
+            why = 'hardness/resistance out of range (hardness up to 1000, resistance up to 10000)'
         elif b['slip'] > 1000:
             why = 'slipperiness above 1.0'
         out.append(('block', b['key'], why))
@@ -1188,6 +1204,8 @@ def retail195_verdicts(n, *, fuel=False):
             kname = XS.FEATURE_KINDS[v['kind'] - 1]
             if v['dimension'] == 1:
                 why = 'nether features are not possible (0x4b8090 never calls decorate)'
+            elif v['dimension'] == 2 and any(not key.startswith('minecraft:') for key in v['biomes']):
+                why = 'custom biomes are generated only in the Overworld'
             elif kname == 'flower':
                 why = 'flowers need a FlowerBlock'
         elif sec == 'sounds':

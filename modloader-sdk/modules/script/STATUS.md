@@ -35,7 +35,11 @@ make forward progress (every instruction re-raises), and `lce_script_run_main` /
 | `lce.register_smelting{key,input,result,count,xp_milli}` | `register_smelting` |
 | `lce.register_fuel{item,burn_ticks}` | `register_fuel`; item is a namespaced key, burn time is an integer from 1 to 72000 ticks. Returns success and status; backend fuel support remains experimental. |
 | `lce.register_feature{key,kind,dimension,block,block2,structure,size,per_chunk,min_y,max_y,rarity,biomes}` | `register_feature`; kind 1 = ore, 2 = tree, 4 = lake, 5 = structure. Biomes is an optional list of biome keys. Returns success and status. |
+| `lce.register_biome{key,name,temperature_milli,rainfall_milli,top_block,filler_block,grass_rgb,foliage_rgb,water_rgb,sky_rgb,weight,height_base_milli,height_variation_milli,features}` | `register_biome`; requires `LCE_CAP_BIOMES`. |
+| `lce.register_structure{key,size_x,size_y,size_z,palette,blocks}` | `register_structure`; requires `LCE_CAP_STRUCTURES`. |
 | `lce.subscribe(name, fn)` | `subscribe` (+ delivers via `lce_script_event`) |
+| `lce.subscribe_tick(interval, fn[, offset])` | Mod-local pacing for the same `ServerTick` event slot, gated by `LCE_CAP_EV_TICK`. |
+| `lce.tick_stats()` | Mod-local counts for paced callback attempts and skipped deliveries. |
 | `lce.send_chat` / `give_item` / `translate` / `log` | the matching services |
 | `lce.config(key[, default[, min, max]])` (API 1.8, `#ifdef LCE_HAVE_CONFIG_1_8`) | `config_int` / `config_double` / `config_string` chosen by the default's type (boolean = `config_int` 0..1); no default = `config_get` raw value or nil. Host: test §2f against the real `loader/config_store.h`, plus a pre-1.8 table (returns the default) |
 
@@ -70,3 +74,8 @@ The composite runner loads `scripts/main.lua` during registration, before
 routes events to each live script at runtime. The runner uses a separate Lua
 state per mod and refuses scripts when the build does not bind scripting.
 Service/event calls are only valid at `RUNNING`.
+
+The `luaworldgen` composite fixture commits a Lua biome, structure, and
+structure feature and checks the prepared cell array and biome filter. Both
+the stock biome and the custom biome's ledger ID are resolved before the
+worldgen publisher runs. The fixture also covers retail dimension refusals.

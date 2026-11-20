@@ -1258,7 +1258,7 @@ extern "C" int b195_terrain_bind(b195_module *m, uintptr_t atlas, uint32_t gen, 
 extern "C" int b195_terrain_detach(b195_module *m) {
     if (!m) return 0;
     if (m->terrain_state != 2 && m->terrain_state != 3) return 1;
-    if (!m->generations) return 0;
+    if (!m->generations || !terrain_held(m)) return 0;
     unsigned slot = m->generations - 1;
     int rc = 1;
     for (uint32_t i = 0; i < m->count; ++i) {

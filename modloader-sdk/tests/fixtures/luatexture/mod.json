@@ -1,0 +1,8 @@
+{
+  "format": 1,
+  "id": "luatexture",
+  "name": "Lua Texture Test",
+  "version": "1.0.0",
+  "author": "tests",
+  "scripts": {"main.lua": "scripts/main.lua"}
+}

@@ -18,7 +18,7 @@ import sys
 from pathlib import Path
 from unicorn import Uc, UC_ARCH_X86, UC_MODE_64, UC_PROT_ALL, UcError
 from unicorn.x86_const import (UC_X86_REG_RAX, UC_X86_REG_RDI, UC_X86_REG_RSI, UC_X86_REG_RDX, UC_X86_REG_RCX, UC_X86_REG_R8,
-                               UC_X86_REG_R9, UC_X86_REG_RSP, UC_X86_REG_RIP, UC_X86_REG_XMM0, UC_CPU_X86_HASWELL)
+                               UC_X86_REG_R9, UC_X86_REG_R15, UC_X86_REG_RSP, UC_X86_REG_RIP, UC_X86_REG_XMM0, UC_CPU_X86_HASWELL)
 
 IMAGE = Path('/home/codey/minecraft-ps4-research/private-direct-legacy-capture/legacy-195-analysis.elf')
 SHA = 'c675e6ce601b6457a1c1466b0da3d9ccd7415f6b0db9f8e9da7b6e511816029f'
@@ -307,9 +307,9 @@ def plt3(u, addr, size, _):
     u.reg_write(UC_X86_REG_RSP, rsp + 8)
     u.reg_write(UC_X86_REG_RIP, ret)
 m.u.hook_add(UC_HOOK_CODE, plt3, begin=0xe6c000, end=0xe6e000)
-def call_plt(fn, args, steps=400000):
+def call_plt(fn, args, steps=400000, *, stack=()):
     unknown.clear()
-    r = m.call(fn, args, steps=steps)
+    r = m.call(fn, args, stack=stack, steps=steps)
     check(not unknown, f'{fn:#x}: unhandled import {[(hex(a), "from", hex(r)) for a, r in unknown]}')
     return r
 def wstr(text):   # Dinkumware wstring (40 bytes): +8 inline buffer / pointer, +0x18 size, +0x20 cap
@@ -454,4 +454,49 @@ check(q(rec) == lis and q(rec + 0x10) == st, 'SetTime handle calls listener vt +
 sb = m.alloc(0x60); dat = m.alloc(16)
 call_plt(0x5fbd70, (sb, wstr('ruby:click'), dat, 5), steps=400000)
 check(q(sb) == 0x12bb4c0 and q(sb + 0x50) == dat and m.rd(sb + 0x58) == 5 and q(sb + 0x40) == 10, 'SB payload ctor: vtable, channel wstring +0x28 (size +0x40), data +0x50, len +0x58')
+
+# Exercise the SDK's native call ABI through the real color packet constructor.
+# Stop after construction, before any connection is used.
+tint_level, tint_type = m.alloc(0x300), m.alloc(0x40)
+tint_packets = []
+def capture_tint_packet(u, address, size, user):
+    tint_packets.append(u.reg_read(UC_X86_REG_R15))
+    u.emu_stop()
+tint_hook = m.u.hook_add(UC_HOOK_CODE, capture_tint_packet, begin=0xcfd849, end=0xcfd849)
+def double_bits(number):
+    return struct.unpack('<Q', struct.pack('<d', number))[0]
+for reg, number in enumerate((10.5, 65, -3.5, 1.25, 1.25, 1.25, 0, 18 / 255), UC_X86_REG_XMM0):
+    m.u.reg_write(reg, double_bits(number))
+call_plt(0xcfd730, (tint_level, tint_type, 7, 0, 0), stack=(double_bits(128 / 255), double_bits(1)))
+m.u.hook_del(tint_hook)
+check(len(tint_packets) == 1, 'native sender constructs one RGB particle packet')
+tint_packet = tint_packets[0]
+check(q(tint_packet) == 0x1228ab8 and q(tint_packet + 0x28) == tint_type and m.rb(tint_packet + 0x50) == 0,
+      'RGB packet uses the normal particle type and stock range limiter')
+check(struct.unpack('<fff', m.u.mem_read(tint_packet + 0x30, 12)) == (10.5, 65, -3.5) and m.rd(tint_packet + 0x4c) == 7,
+      'RGB packet retains position and count')
+check(m.rb(tint_packet + 0x68) == 1 and
+      m.u.mem_read(tint_packet + 0x6c, 12) == struct.pack('<fff', 18 / 255, 128 / 255, 1),
+      'RGB flag and separate red, green, blue floats survive the native call')
+
+# Follow the same packet through the stock client listener. Stub its Gaussian
+# random source and capture parameters at the level's particle spawn call.
+tint_listener, tint_pair = m.alloc(0x100), m.alloc(16)
+m.wq(tint_listener + 0x60, tint_level)
+m.wq(tint_pair, tint_packet)
+m.u.mem_write(0x596cb0, bytes.fromhex('66 0f ef c0 c3'))  # pxor xmm0,xmm0; ret
+tint_spawns = []
+def capture_tint_spawn(u, address, size, user):
+    registers = tuple(u.reg_read(reg) for reg in (UC_X86_REG_RDI, UC_X86_REG_RSI, UC_X86_REG_RDX))
+    values = tuple(u.reg_read(reg) & 0xffffffffffffffff for reg in range(UC_X86_REG_XMM0, UC_X86_REG_XMM0 + 6))
+    tint_spawns.append((registers, values))
+    sp = u.reg_read(UC_X86_REG_RSP)
+    u.reg_write(UC_X86_REG_RSP, sp + 8)
+    u.reg_write(UC_X86_REG_RIP, q(sp))
+spawn_hook = m.u.hook_add(UC_HOOK_CODE, capture_tint_spawn, begin=0x3f42c0, end=0x3f42c0)
+call_plt(0xba4030, (tint_listener, tint_pair))
+m.u.hook_del(spawn_hook)
+packet_rgb = struct.unpack('<fff', m.u.mem_read(tint_packet + 0x6c, 12))
+expected_spawn = ((tint_level, tint_type, 0), tuple(double_bits(v) for v in (10.5, 65, -3.5, *packet_rgb)))
+check(tint_spawns == [expected_spawn] * 7, 'stock client forwards count, position and RGB to the level particle renderer')
 print(f'events195 unicorn: ALL {checks} CHECKS PASSED (real 1.95 code)')

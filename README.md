@@ -29,6 +29,15 @@ close the game and restore the saved PRX.
   option targets 2,048 × 2,048 chunks. Terrain generation and save/reload were
   verified on a console, with full-size travel still untested.
 
+The SDK expansion adds Lua registration for item and block textures, block
+variants and collision shapes, entities based on stock mobs, biomes and
+structures. Lua can also set its server tick cadence and request coloured
+particles. The offline CUSA00265 1.95 test verified scripted inventory grants,
+item and placed-block textures, a visible cyan particle burst, and saving and
+reopening a world containing the custom block. Mob registration and renderer
+startup passed on the console. Custom spawning and broader world generation
+need gameplay verification.
+
 The SDK host suites run with `make -C modloader-sdk test`. The build script
 for the full plugin uses the local r72 integration workspace, prebuilt
 components and OpenOrbis. Apply

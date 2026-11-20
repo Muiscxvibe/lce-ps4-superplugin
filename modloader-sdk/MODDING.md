@@ -400,14 +400,13 @@ Vanilla bases: `water`, `mundane`, `thick`, `awkward`, and the standard potions.
 
 **`entities`:**
 ```json
-{"key": "m:gem_golem", "name": "Gem Golem", "base_mob": "minecraft:iron_golem", "texture": "m:golem_skin",
- "health": 60, "attack_damage": 7, "move_speed": 0.25, "category": "creature", "spawn_weight": 5, "min_group": 1, "max_group": 2,
- "goals": [{"goal": "wander", "speed": 0.6}, {"goal": "follow_tempt_item", "param": "m:gem"}],
- "drops": [{"item": "m:gem", "min": 1, "max": 3, "chance": 100, "looting": 1}],
- "spawn_biomes": ["minecraft:plains"], "egg_primary": "#2244ff", "egg_secondary": "#ffffff", "sound_ambient": "m:chime"}
+{"key": "m:grove_zombie", "base_mob": "minecraft:zombie",
+ "health": 30, "attack_damage": 4, "move_speed": 0.28, "category": "monster", "spawn_weight": 10, "min_group": 1, "max_group": 2,
+ "goals": [{"goal": "wander", "priority": 3, "speed": 1.2}],
+ "spawn_biomes": ["minecraft:plains"], "sound_ambient": "minecraft:entity.zombie.ambient"}
 ```
 - Goals: `wander`, `look_at_player`, `panic`, `melee_attack`, `target_player`, `flee_sun`, `follow_tempt_item`, `breed`, `swim`, `avoid_entity`.
-- The model and renderer are those of `base_mob`. New models are not possible (API_STATUS).
+- Retail 1.95 uses the base mob's model, renderer, skin, display name, and loot. See the support table below for attribute and goal restrictions.
 
 **`ores`** (shorthand for an ore feature):
 ```json
@@ -446,6 +445,7 @@ Vanilla bases: `water`, `mundane`, `thick`, `awkward`, and the standard potions.
 ```json
 {"key": "m:sparkles", "clone_of": "minecraft:reddust", "tint": "#ffff00"}
 ```
+Particle descriptors are currently stored as metadata. Use `lce.spawn_tinted_particles` from an event to emit a tinted stock particle.
 
 **`scripts`:** Lua behaviour without native code.
 ```json
@@ -474,7 +474,7 @@ The console backend is all-or-nothing **per mod**: one refused entry drops the w
 | Content | Accepted | Refused (reason in one line) |
 |---|---|---|
 | Items | `generic`; `pickaxe` `axe` `shovel` `hoe` `sword` (tier wood..gold, durability, mining speed, attack bonus, enchantability, repair item); `helmet` `chestplate` `leggings` `boots` (protection points, durability, layer `minecraft:chainmail/iron/diamond/gold` or none = iron); `food` (hunger, saturation, eat time 16/32, always-edible, **one** vanilla or mod effect); `throwable` generic items (API 1.9: speed 0.1..4, inaccuracy 0..20, damage, fire, explosion, effects; up to 16); `boat` generic items (API 1.10: place a stock boat of a wood type 0..5) | fuel (`fuel_ticks`), FOIL glint, custom armour layer texture, leather layer, food with 2+ effects, stack > 1 for tools/armour, a throwable that is not `generic`, a custom projectile model |
-| Blocks | full cubes or one `box`: material stone/wood/metal/dirt/sand/wool (glass with `transparent`, plant with `no_collision`), hardness, resistance, sound, light, slipperiness, flammability, drop item + count range, harvest tool that matches the material (pickaxe: stone/metal, axe: wood), `transparent`, `no_collision`, 2..16 `variants`, 1..19 blocks | containers other than 9 slots, facing/axis placement, replaceable, multi-box shapes, harvest tier above wood |
+| Blocks | Full cubes, `box`, `boxes` and `variant_boxes`. Supports per-face textures, 2–16 metadata variants, and 9-slot or 27-slot storage as described in §3.3. | Other container sizes, facing or axis placement, replaceable blocks, and harvest tier above wood. |
 | Recipes | shaped and shapeless, result count 1..64 and data value, ingredient data values (`minecraft:wool@14`), several recipes per output, up to 128 | — |
 | Smelting | up to 64, XP, count/aux results | two recipes for one input item |
 | Brewing | stock or mod potion → stock or mod potion, with a mod or vanilla reagent | from = to, `minecraft:empty` |
@@ -484,7 +484,7 @@ The console backend is all-or-nothing **per mod**: one refused entry drops the w
 | Biomes | new overworld biomes: generation weight per climate band, top/filler blocks, height, grass/foliage/water/sky colours, features, spawns | nether/end biomes, ocean-depth biomes, hill/shore/river variants |
 | Fuel | experimental opt-in only; see §3.8 | refused by the default `retail195` profile and build |
 | Entities | clones of 56 vanilla mobs: health, speed, attack (Monster bases), extra goals wander/look/swim/target/avoid/melee (Monster)/breed (Animal), natural spawns per biome, vanilla mob sounds | custom skin texture, custom drops, hitbox size, panic/flee-sun/tempt goals, custom audio |
-| Features | ores, trees (3..8 high), lakes (min_y ≥ 6), structures from a template that fits one chunk, overworld and End | flowers, Nether features |
+| Features | Ores, trees (3–8 high), lakes (`min_y` ≥ 6), and structures that fit one chunk. Features can generate in the Overworld and End. Custom biome filters apply in the Overworld. | Flowers, Nether features, and custom biome filters in the End. |
 | Sounds, particles | clones of a vanilla sound event (volume/pitch); **custom audio** from a 16-bit mono WAV / tinted clone of a vanilla particle | music/record streams, mob sound slots that name a mod sound / a new particle texture |
 | Scripts | `scripts/main.lua` (§8) | an event name the runtime does not know (`ServerTick`, not `server_tick`) |
 | Strings | every locale; the current game language is used | — |
@@ -588,7 +588,7 @@ lce.subscribe("Chat", function(e) if e.message == "!quiet" then return true end 
 | Libraries | `base` (no `dofile`/`loadfile`/`require`), `table`, `string`, `math`, `utf8`, `coroutine`. No `io`, `os`, `debug`, `package` |
 | `load` | text chunks only; bytecode is refused |
 | Memory | 4 MiB per mod on the console (allocation over the cap fails with a Lua memory error) |
-| Instructions | 20,000,000 per entry (registration run or one event). The limit cannot be caught by `pcall`: once it trips, the script is dead for the rest of the session and every later event is skipped |
+| Instructions | 20,000,000 per VM, accumulated across registration and event callbacks. Once the limit trips, the VM stops executing for the rest of the session, even inside `pcall`. |
 | `print` / `lce.log` | go to the plugin log as `LCE_SDK script: …` |
 
 A script error during registration **rejects the mod** (`state=1`, reason `script main.lua: <Lua message>`).
@@ -597,13 +597,110 @@ A script error during registration **rejects the mod** (`state=1`, reason `scrip
 
 | Lua | Same as `mod.json` |
 |---|---|
+| `lce.register_texture{key, atlas, rgba}` | §3.1. Use `items` for item icons or `terrain` for block faces and pass a 1024-byte binary string of 16×16 row-major RGBA8 pixels with straight alpha. Returns success and status. |
 | `lce.register_item{key, name, texture, max_stack, kind, creative_tab, max_damage, tier, food_hunger, food_saturation_milli, use_ticks, always_edible, fuel_ticks}` | §3.2 (`kind` is the numeric `lce_item_kind`; `tier` is numeric `lce_tool_tier`, 0..5; retail tools need 1..5 and `max_stack = 1`); food uses `kind = 1`, `food_hunger` in half-shanks, `food_saturation_milli` as saturation × 1000, optional `use_ticks` 0/16/32 and `always_edible` boolean; `fuel_ticks` defaults to 0, accepts integers 0..72000, and needs the experimental fuel backend when nonzero. |
-| `lce.register_block{key, name, texture, hardness_milli, …}` | §3.3 |
+| `lce.register_block{key, name, texture, hardness_milli, …}` | §3.3. Accepts per-face textures, variants, one-box and multi-box geometry, storage slots and block properties. |
 | `lce.register_recipe{key, result, count, shapeless, cells, width, height}` | §3.4 |
 | `lce.register_smelting{key, input, result, count, xp_milli}` | §3.5 |
 | `lce.register_fuel{item, burn_ticks}` | §3.8; integer ticks 1..72000. Returns success and status. It requires the experimental fuel backend. |
 | `lce.register_feature{key, kind, dimension, block, block2, structure, size, per_chunk, min_y, max_y, rarity, biomes}` | world-generation feature; `kind` is numeric (1 ore, 2 tree, 4 lake, 5 structure), and `biomes` is an optional array of biome keys. Returns success and status. |
+| `lce.register_entity{key, base_mob, max_health_milli, move_speed_milli, attack_damage_milli, category, spawn_weight, min_group, max_group, goals, spawn_biomes, sound_ambient, sound_hurt, sound_death, spawn_egg}` | §3.8. Registers a custom type with a vanilla base and returns success and status. |
+| `lce.register_biome{key, name, temperature_milli, rainfall_milli, top_block, filler_block, grass_rgb, foliage_rgb, water_rgb, sky_rgb, weight, height_base_milli, height_variation_milli, features}` | Overworld land biome in §3.8. Omitted numeric fields default to zero. Climate and height values use thousandths. Colours are integer `0xRRGGBB` values. |
+| `lce.register_structure{key, size_x, size_y, size_z, palette, blocks}` | Structure template in §3.8. Supply the palette and cell indices as dense arrays. Cells are ordered by x, then z, then y. Index 0 preserves the existing block, and `palette[1]` still requires a valid block key. |
 | `lce.subscribe(event, fn)` | events below |
+
+#### Textures
+
+```lua
+local rgba = string.rep(string.char(83, 214, 107, 255), 16 * 16)
+local ok, status = lce.register_texture{key = "mymod:gem_icon", atlas = "items", rgba = rgba}
+assert(ok, "register_texture failed: " .. status)
+assert(lce.register_item{key = "mymod:gem", name = "Gem", texture = "mymod:gem_icon"})
+```
+
+Use your mod namespace and register each texture key once across the manifest and Lua. The loader copies the bytes and stages them for the atlas owner to apply during startup or resource reload. A malformed Lua descriptor raises an error, and loader rejections return `false` and the status code. Declare content that uses a Lua-generated texture in Lua so the packer can still validate manifest texture references. Changing Lua-generated textures requires restarting the mod session.
+
+#### Blocks
+
+`lce.register_block` reads descriptor tables and returns `ok, status` from the
+registration planner. The game backend checks the block again before publication.
+
+- `texture` is a terrain texture key or a table with `all`, `side`, and individual
+  face keys `down`, `up`, `north`, `south`, `west`, and `east`. `bottom` and `top`
+  are aliases for `down` and `up`. Set `all` or `down` for the base block.
+- `variants = {{}, {name = "Blue", texture = "m:blue"}, …}` lists 2–16 metadata
+  states. The first entry represents data value 0 and uses the base name and texture.
+  Subsequent entries can override the name or per-face texture. Missing variant faces
+  use the variant's down texture, then the corresponding base face.
+- `box = {x0, y0, z0, x1, y1, z1}` sets single-box geometry in sixteenths of a block.
+  `boxes = {{…}, …}` uses 1–8 boxes for every state. `variant_boxes = {{{…}}, …}`
+  lists an equal number of boxes for each state. `boxes` with `rotate_boxes = true`
+  and four variants generates successive 90° rotations. Coordinates are integers in
+  0–16 and each minimum must be below its corresponding maximum.
+- `storage_slots = 9` uses the dispenser inventory. `storage_slots = 27` requires an
+  opaque, colliding wood cube (`material = 1`) with no variants. Two compatible
+  adjacent blocks can form a 54-slot double chest. See §3.3 for retention and backend
+  limits.
+- Optional properties include numeric `material`, `sound`, `placement`, and
+  `harvest_tier` (the C enums), `hardness_milli`, `resistance_milli`,
+  `slipperiness_milli`, `light_emission`, `flammability`, `drop_min`, and
+  `drop_max`, item key `drop`, `harvest_tool`, and booleans `transparent`,
+  `no_item`, `no_collision`, `random_tick`, and `replaceable`. Retail 1.95
+  placement and block flag restrictions apply as in §3.3.
+
+#### Mobs
+
+This Lua package registers a zombie clone with 30 health points and adds a wandering goal.
+
+```lua
+local ok, status = lce.register_entity{
+    key = "m:grove_zombie",
+    base_mob = "minecraft:zombie",
+    max_health_milli = 30000,
+    category = 1,
+    spawn_weight = 10,
+    min_group = 1,
+    max_group = 2,
+    spawn_biomes = {"minecraft:plains"},
+    goals = {{kind = 1, priority = 3, speed_milli = 1200}},
+    spawn_egg = true
+}
+assert(ok, "could not stage mob " .. status)
+```
+
+`key` and `base_mob` are required. Zero attributes inherit the base values. `spawn_weight` defaults to zero and opts out of natural spawns. Set `category` to 0 for creature, 1 for monster, 2 for water, or 3 for ambient. Omit `spawn_biomes` to inherit the base mob's eligible biomes in the selected category. `spawn_egg = true` uses the base mob's egg name and colours where that mob has an egg.
+
+Each goal takes the numeric `lce_ai_goal_kind` in `kind`, plus optional `priority`, `speed_milli`, and `param`. Retail 1.95 accepts up to eight added goals. It supports wander (1), look at player (2), melee (4) and target (5) on monsters, breed (8) on animals, swim (9), and avoid (10). For target and avoid, `param` can name a compatible vanilla mob or `minecraft:player`. Use matching vanilla mob sound slots such as `minecraft:entity.zombie.hurt`.
+
+`true, 0` means the loader staged the descriptor. The startup plan still checks the base, goal and sound compatibility, and renderer readiness. This Lua binding supports the existing native clone path on 1.95. Custom skins, display names, drops, hitboxes, egg RGB colours, and remote client synchronisation require further engine support.
+
+#### Biomes and structures
+
+Biome and structure registration return `ok, status`. A successful call stages
+the descriptor for the loader's commit checks. A backend without the capability
+returns `false, LCE_E_UNSUPPORTED` (−4). Malformed Lua tables raise an error.
+
+```lua
+assert(lce.register_biome{
+  key = "m:amber_grove", name = "Amber Grove", temperature_milli = 800,
+  rainfall_milli = 400, weight = 20, grass_rgb = 0x9a8427,
+})
+assert(lce.register_structure{
+  key = "m:shrine", size_x = 2, size_y = 1, size_z = 2,
+  palette = {"minecraft:bedrock", "minecraft:stone"}, blocks = {1, 0, 1, 1},
+})
+assert(lce.register_feature{
+  key = "m:shrine_gen", kind = 5, dimension = 0, structure = "m:shrine",
+  per_chunk = 1, min_y = 64, max_y = 80, biomes = {"m:amber_grove"},
+})
+```
+
+Use the feature's `biomes` list to restrict placement. Retail 1.95 places
+features when new chunks in the Overworld (`dimension = 0`) or End
+(`dimension = 2`) decorate. It refuses Nether features (`dimension = 1`),
+and the loader has no custom dimension registration API. Retail structure
+templates fit one chunk, with limits of 16 × 64 × 16 blocks after applying
+the loader's size limit. A template needs a structure feature to generate.
 
 Workshop-compatible globals map onto the same calls: `registerItem`, `registerBlock`, `registerShapedRecipe`, `registerShapelessRecipe`, `registerSmeltingRecipe`, `registerEvent`. `registerItemTier`, `registerArmorMaterial`, `registerSapling`, `registerOreFeature` and `registerTreeFeature` are accepted as **no-ops** and counted as denied, so an old script still loads; declare those things in `mod.json` instead.
 
@@ -640,6 +737,27 @@ Workshop-compatible globals map onto the same calls: `registerItem`, `registerBl
 - A callback's result is read with `lua_toboolean`, so returning `0` cancels. Return `nil`/`false` to continue.
 - API 1.2 fields exist only when the backend fills them (`LCE_CAP2_EV_CONTEXT`). Test for `nil`.
 
+#### Pace mod work on the server thread
+
+`lce.subscribe_tick(interval, callback[, offset])` sets the `ServerTick` callback for this mod. It runs when `e.tick % interval == offset`. The interval is an integer from 1 through 4,294,967,295. The offset defaults to 0 and must be smaller than the interval. Registration returns `true, 0` on success or `false, LCE_E_UNSUPPORTED` when the backend lacks `LCE_CAP_EV_TICK`. A later `lce.subscribe("ServerTick", ...)` replaces it with an every-tick callback.
+
+```lua
+local interval = lce.config("performance.refresh_interval", 20, 1, 1200)
+local batch = lce.config("performance.refresh_batch", 4, 1, 64)
+lce.subscribe_tick(interval, function(e)
+    -- process_next_refresh is a mod-owned function that returns false when idle.
+    for i = 1, batch do
+        if not process_next_refresh(e.tick) then break end
+    end
+end, 1 % interval)
+```
+
+`lce.tick_stats()` reports `callbacks_run` (including attempts that raised errors) and `callbacks_skipped` (off-cadence or malformed tick deliveries). The counters belong to the mod's VM and accumulate across re-registration and world changes until the VM is closed. An off-cadence delivery skips script entry and payload table allocation. Check `type(lce.subscribe_tick) == "function"` if your package also targets older loaders.
+
+The cadence follows the host's delivered server tick sequence, including across world changes. Missed ticks do not replay. Clear world-specific work on `WorldUnload` and follow the usual event-payload lifetime rules. Use a batch limit to bound how many jobs your mod starts per callback.
+
+Native mods can use `lce_tick_pacing_due` from `include/lce_tick_pacing.h` with a regular `LCE_EV_SERVER_TICK` subscription. Check `LCE_CAP_EV_TICK` before registering. Pacing controls your mod's work. Client render timing, frame rates, chunk generation and global scheduling stay under their existing owners.
+
 ### 8.4 Runtime services (inside an event callback)
 
 | Lua | C (`lce_api`) | Console status |
@@ -663,6 +781,7 @@ Workshop-compatible globals map onto the same calls: `registerItem`, `registerBl
 | `lce.teleport(entity, x, y, z)` (API 1.2) | `teleport` | virtual `teleportTo` (+0x670; players go through their connection) with position readback |
 | `lce.set_motion(entity, dx, dy, dz)` (API 1.2) | `set_motion` | virtual `push` (+0x230) to the exact velocity; `hasImpulse` makes the tracker send it |
 | `lce.spawn_particles(level, type_id, x, y, z[, count[, dx, dy, dz[, speed]]])` (API 1.3) | `spawn_particles` | `ServerLevel::sendParticles 0xcfd290` (ClientboundLevelParticlesPacket to players in range); `type_id` = ParticleType id (`+0x28`) |
+| `lce.spawn_tinted_particles(level, rgb, x, y, z[, count[, spread]])` (API 1.12) | `spawn_tinted_particles` | Emits the stock BlockRemover particle with color `0xRRGGBB` to nearby players through the stock particle packet. Count accepts 1–1000 and defaults to 1. Spread accepts 0–64 and defaults to 0. |
 | `lce.item_tag_get/set/remove(player, key[, value])` (API 1.4) | `item_tag_*` | the main-hand stack's CompoundTag (`+0x30`): real `get 0x1b7400` / `putInt` / `putDouble` / `putString` / `remove`, then `Inventory::setChanged` |
 | `lce.register_channel(ch)` / `lce.send_payload(player_or_nil, ch, bytes)` + event `CustomPayload` (API 1.4) | `register_channel` / `send_payload` / `LCE_EV_CUSTOM_PAYLOAD` | `ClientboundCustomPayloadPacket` (ctor `0x18ba10`) server -> client; client -> server on the host player's listener `+0x340` |
 | `lce.send_to_server(ch, bytes)` + event `ClientPayload` (API 1.6) | `send_to_server` / `LCE_EV_CLIENT_PAYLOAD` | client-side networking for remote PS4s running the mod: the server's `send_payload` arrives as `ClientPayload` (`ev.channel`, `ev.data`, no `ev.player`) on the client thread (world services are refused there); answer with `send_to_server` (immediate inside the handler, else sent within about 1 s; on the host it loops back to its own server as `CustomPayload`). Hooked through the packet factory map `0x142dcb0` (data only). Through a PC server, mod channels are relayed to the other PS4 clients (`server/mod-channels.patch`) |
@@ -675,6 +794,16 @@ Every service:
 - caches nothing between callbacks.
 
 Each API 1.2 service has a `LCE_CAP2_SVC_*` bit in `lce_api.capabilities2`.
+For tinted particles, native mods check `lce_api.struct_size` and `LCE_CAP2_SVC_TINTED_PARTICLES` before calling the appended field. Lua mods can check for the binding before subscribing to events so the same package runs on older loaders. If the binding is present and the backend lacks the service, the call returns `LCE_E_UNSUPPORTED` (-4).
+
+```lua
+local spawn_tinted_particles = lce.spawn_tinted_particles
+if type(spawn_tinted_particles) == "function" then
+    lce.subscribe("BlockBreak", function(ev)
+        spawn_tinted_particles(ev.level, 0x1280ff, ev.x + 0.5, ev.y + 0.5, ev.z + 0.5)
+    end)
+end
+```
 
 ### 8.5 Config files (API 1.8)
 

@@ -532,6 +532,7 @@ def old_jar():
         for n in ('ruby_ore', 'ruby_block'):
             extra[f'assets/rubymod/textures/blocks/{n}.png'] = png((90, 90, 90, 255))
         extra['assets/rubymod/textures/entity/ruby_golem.png'] = png(size=(64, 64))
+        extra['assets/rubymod/shaders/post/example.json'] = '{}'
         _built['old'] = (make_jar(d / 'rubymod.jar', cls, ('rubymod/',), extra), cls)
     return _built['old']
 
@@ -954,7 +955,8 @@ class OldForgePortTests(unittest.TestCase):
     def test_report_categories(self):
         P.write_report(self.porter, {'full': P.run_check(self.out, 'full')}, None)
         rep = (self.out / 'PORT_REPORT.md').read_text()
-        for t in ('## Ported automatically', '## Guessed', '## Needs manual work', '## Impossible on 1.95', '--profile full'):
+        for t in ('## Ported automatically', '## Guessed', '## Needs manual work', '## Impossible on 1.95', '--profile full',
+                  '## Source features requiring manual work', 'assets/rubymod/shaders/post/example.json'):
             self.assertIn(t, rep)
 
     def test_srg_mapping(self):
@@ -1331,6 +1333,37 @@ class ValidatorRangeTests(unittest.TestCase):
 
 
 class LcePortTests(unittest.TestCase):
+    def test_registrations_at_one_factory_site_keep_distinct_keys(self):
+        porter = P.Porter('synthetic.jar', BASE / 'synthetic', work=BASE)
+        porter.ns = porter.lid = 'rubymod'
+        porter.era, porter.harvest, porter.rr = 'old', {}, None
+        shared_site = ('x', 'make', 7)
+        porter.facts = types.SimpleNamespace(
+            prog=I.Program({}),
+            registrations=[X.Registration(name, I.Obj('net/minecraft/item/Item', shared_site), 'item', 'sample')
+                           for name in ('ruby', 'lapis')],
+        )
+        porter._assign_keys()
+        porter._describe()
+        self.assertEqual({key: entry['key'] for key, entry in porter.item_entries.items()},
+                         {'ruby': 'rubymod:ruby', 'lapis': 'rubymod:lapis'})
+        self.assertTrue(any('share an analysed factory site' in line for line in porter.rep.lines['manual']))
+
+    def test_potion_roles_use_minecraft_class_hierarchy(self):
+        prog = I.Program({
+            'sample/Potion': types.SimpleNamespace(super_name='java/lang/Object'),
+            'sample/MobEffect': types.SimpleNamespace(super_name='java/lang/Object'),
+            'sample/RealEffect': types.SimpleNamespace(super_name='net/minecraft/potion/Potion'),
+        })
+        for name, kind in (
+            ('sample/Potion', 'other'),
+            ('sample/MobEffect', 'other'),
+            ('sample/RealEffect', 'effect'),
+            ('net/minecraft/world/effect/MobEffect', 'effect'),
+            ('net/minecraft/world/item/alchemy/Potion', 'potion'),
+        ):
+            self.assertEqual(X.classify(prog, I.Obj(name)), kind, name)
+
     def test_112_data_and_modern_names(self):
         rep = lce_port.Report()
         self.assertEqual(lce_port.vanilla_ref('minecraft:dye', rep, 'w', old=True, data=4), 'minecraft:dye@4')

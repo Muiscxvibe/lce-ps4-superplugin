@@ -564,14 +564,15 @@ extern "C" int lce195_ev_route_block_item(uintptr_t item, uint32_t id, uintptr_t
     return block ? route(g.block_items, item, id, original, block, LCE195_RVA_BLOCKITEM_USEON) : 0;
 }
 extern "C" int lce195_ev_block_item_use_on_thunk(void *item, const lce195_pair *player, void *level, const int32_t *pos,
-                                                 int hand, int face, float cx, float cy, float cz) {
+                                                 int hand, const void *direction, float cx, float cy, float cz, bool test_only) {
     Routed *r = g.ready ? find_routed(g.block_items, (uintptr_t)item) : nullptr;
     uintptr_t original = r ? r->original : g.host.image + LCE195_RVA_BLOCKITEM_USEON;
     int32_t at[3] = {0, 0, 0};
     bool have = pos && rd((uintptr_t)pos, at, sizeof at);
-    int rc = ((int (*)(void *, const lce195_pair *, void *, const int32_t *, int, int, float, float, float))original)(
-        item, player, level, pos, hand, face, cx, cy, cz);
-    if (!r || g.failed || rc != 0 || !have || !player || !player->object || !server_level((uintptr_t)level)) return rc;
+    int rc = ((decltype(&lce195_ev_block_item_use_on_thunk))original)(item, player, level, pos, hand, direction, cx, cy, cz, test_only);
+    if (!r || g.failed || rc != 0 || test_only || !have || !player || !player->object || !server_level((uintptr_t)level)) return rc;
+    int32_t face = -1;
+    if (direction && !rd((uintptr_t)direction + LCE195_OFF_DIRECTION_INDEX, &face, sizeof face)) face = -1;
     // Find where the block landed: clicked cell (replaceable) or its neighbour.
     static const int8_t d[6][3] = {{0, -1, 0}, {0, 1, 0}, {0, 0, -1}, {0, 0, 1}, {-1, 0, 0}, {1, 0, 0}};
     uintptr_t lvt = 0, getter = 0;

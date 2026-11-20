@@ -76,6 +76,7 @@
 #define LCE195_RVA_BLOCK_WILL_DESTROY 0x94800u
 #define LCE195_OFF_BLOCKITEM_USEON  0x28u      /* BlockItem::useOn 0x7d4c0        S */
 #define LCE195_RVA_BLOCKITEM_USEON  0x7d4c0u
+#define LCE195_OFF_DIRECTION_INDEX 0x08u      /* Direction::get3DDataValue 0x200600 S */
 #define LCE195_OFF_LEVEL_GETSTATE   0x38u      /* -> 0x3f2820                      C */
 #define LCE195_OFF_STATE_GETBLOCK   0x170u     /*                                  S */
 /* API 1.2: block use (Block vtable 0x1217e60 +0x2c0 = stock 0x940b0 `xor eax,eax; ret`; overridden by all 25
@@ -149,6 +150,12 @@
 #define LCE195_RVA_PARTICLE_MAP     0x142e1b8u
 #define LCE195_RVA_PARTICLE_GET_ID  0x526750u
 #define LCE195_OFF_PARTICLE_ID      0x28u
+/* The stock BlockRemover sends normalized RGB in a separate particle packet variant. */
+#define LCE195_RVA_SEND_TINTED_PARTICLES 0xcfd730u
+#define LCE195_RVA_TINTED_PARTICLES_PACKET_CALL 0xcfd839u
+#define LCE195_RVA_TINTED_PARTICLES_PACKET_COLOR 0x18d2a6u
+#define LCE195_RVA_TINTED_PARTICLE_TYPE_REF 0x87dd5au
+#define LCE195_RVA_TINTED_PARTICLE_TYPE 0x142e060u
 /* item NBT (API 1.3). ItemInstance: CompoundTag* tag at +0x30 (load 0x3b7740 replaces it via vt +0x30 delete, copies via vt
  * +0x40; save 0x3befe0). getOrCreateTag 0x3ba900 (new(0x58) + CompoundTag ctor 0x1b6df0, vtable 0x122ede0).
  * CompoundTag = std::map<wstring, Tag*> at +8 (find 0x1e4f30, end [tag+0x10], value node+0x38). Keys: std::wstring*.
@@ -351,6 +358,9 @@ typedef struct lce195_natives {
     /* API 1.6 client networking */
     void (*sb_payload_ctor)(void *pkt, const void *channel, uint8_t *data, int32_t len);
     void (*client_send)(uintptr_t listener, lce195_pair *sp);
+    void (*send_tinted_particles)(uintptr_t level, uintptr_t type, int32_t count, const int32_t *data, int32_t ndata,
+                                  double x, double y, double z, double dx, double dy, double dz, double speed,
+                                  double red, double green, double blue);
 } lce195_natives;
 void lce195_natives_bind_rvas(lce195_natives *n, uintptr_t base);
 #ifdef __cplusplus

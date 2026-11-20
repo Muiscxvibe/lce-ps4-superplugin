@@ -20,6 +20,7 @@
  * may be called from the pad or UI threads. Not reentrant across servers: one
  * process, one game, one instance. */
 #pragma once
+#include <stdbool.h>
 #include <stddef.h>
 #include <stdint.h>
 #include "../../include/lce_mod_api.h"
@@ -100,10 +101,11 @@ void *lce195_ev_item_use_thunk(void *out, void *item, void *level, const lce195_
 /* ---- block break (private Block vtable slot +0x3e0 playerWillDestroy, stock 0x94800) ---- */
 int lce195_ev_route_block(uintptr_t block_object, uint32_t block_id, uintptr_t original_will_destroy);
 int lce195_ev_block_will_destroy_thunk(uintptr_t block, uintptr_t level, uintptr_t pos, uintptr_t state, const lce195_pair *player);
-/* Block place: mod BlockItem private vtable slot +0x28 useOn (stock 0x7d4c0). */
+/* Block place: mod BlockItem private vtable slot +0x28 useOn (stock 0x7d4c0).
+ * The Direction object pointer is in r9 and the test-only flag is on the stack. */
 int lce195_ev_route_block_item(uintptr_t block_item_object, uint32_t block_id, uintptr_t block_object, uintptr_t original_use_on);
 int lce195_ev_block_item_use_on_thunk(void *item, const lce195_pair *player, void *level, const int32_t *pos,
-                                      int hand, int face, float cx, float cy, float cz);
+                                     int hand, const void *direction, float cx, float cy, float cz, bool test_only);
 
 /* Block use (API 1.2): mod Block private vtable slot +0x2c0 (stock 0x940b0 returns false). Returns 1 routed.
  * The thunk forwards every integer register and three stack words unchanged. */

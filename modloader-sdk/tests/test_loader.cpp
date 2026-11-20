@@ -582,6 +582,29 @@ int main(int argc, char **argv) {
         backend.capabilities2 &= ~LCE_CAP2_BOATS;
     }
 #endif
+#ifdef LCE_HAVE_TINTED_PARTICLES_1_12
+    {
+        Fs f;
+        lce_loader_config c = config(f);
+        l = lce_loader_create(&c);
+        const lce_api *api = lce_loader_api(l);
+        CHECK(!(api->capabilities2 & LCE_CAP2_SVC_TINTED_PARTICLES));
+        CHECK_EQ(api->spawn_tinted_particles(nullptr, nullptr, 0, 0, 0, 0, 1, 0), LCE_E_UNSUPPORTED);
+        lce_api services{};
+        services.struct_size = offsetof(lce_api, spawn_tinted_particles);
+        services.capabilities2 = LCE_CAP2_SVC_TINTED_PARTICLES;
+        services.spawn_tinted_particles = +[](lce_mod_ctx *, void *, uint32_t, double, double, double,
+                                             uint32_t, double) -> lce_status { return LCE_OK; };
+        lce_loader_set_services(l, &services);
+        CHECK(!(api->capabilities2 & LCE_CAP2_SVC_TINTED_PARTICLES));
+        CHECK_EQ(api->spawn_tinted_particles(nullptr, nullptr, 0, 0, 0, 0, 1, 0), LCE_E_UNSUPPORTED);
+        services.struct_size = sizeof services;
+        lce_loader_set_services(l, &services);
+        CHECK(api->capabilities2 & LCE_CAP2_SVC_TINTED_PARTICLES);
+        CHECK_EQ(api->spawn_tinted_particles(nullptr, nullptr, 0, 0, 0, 0, 1, 0), LCE_OK);
+        lce_loader_destroy(l);
+    }
+#endif
 #ifdef LCE_HAVE_CONFIG_1_8
     // ===== N. API 1.8 per-mod config: <root>/<modid>/config read in DISCOVER, before natives/scripts run =====
     {

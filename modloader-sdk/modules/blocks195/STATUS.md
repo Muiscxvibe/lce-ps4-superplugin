@@ -35,7 +35,7 @@ This is the generic N-block backend module for CUSA00265 1.95. Every address bel
 | Variants (API 1.7, 2..16 data values) | Host-tested | ColoredBlock `0x122d060` state slots; see §7 | Static + host (fake 0x924c0 builds the states through vt `+0x478`) |
 | Box shapes (API 1.7) | Host-tested | `+0x178` getShape -> AABB from `0x170`; see §7 | Static + host |
 | Multi-box shapes (API 1.11) | Unicorn + host | render shape 10 + `+0x190` list dispatcher + StairBlock `+0x1b0`; see §8 | Install pins, `tests/test_unicorn_boxes.py`, `test_boxes` |
-| Block entities (`block_entity_slots>0`) | **9-slot storage blocks host-tested**; other sizes refused (see §4) | BE registry `0x140ae70`/`0x140aec0`, register `0xb9b30`, BE static init `0xb8bd0` | Static plus r72 Lucky custom BE (a POD record with no container) |
+| Block entities (`block_entity_slots>0`) | **9-slot and 27-slot storage blocks host-tested**; compatible 27-slot blocks can pair as 54 slots (see §4) | BE registry `0x140ae70`/`0x140aec0`, register `0xb9b30`, BE static init `0xb8bd0` | Static plus host tests of the native dispenser and chest block entity routes |
 | Creative placement | Lead's mapped window | `b195_mapped_items()` mirrors `lce195_mapped_item` | The r72 window admits at most 16 entries, and Lucky and Steel use 2 |
 
 ## 2. W1: data hook instead of the `.text` patch at `0xb74de`

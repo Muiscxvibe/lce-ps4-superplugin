@@ -16,6 +16,7 @@ int lce_ps4_mem_cas8(void *, uintptr_t a, uint64_t expected, uint64_t desired);
 int lce_ps4_is_code(uintptr_t base, uintptr_t a);
 /* 8-byte CAS on a read-only (RELRO) data page outside segment 0: 1 swapped, 0 nothing written, -1 protection not restored. */
 int lce_ps4_mem_patch_ro8(uintptr_t base, uintptr_t a, uint64_t expected, uint64_t desired);
+/* Opaque pthread identity, equal to the r72 retained server view's thread token. */
 uint64_t lce_ps4_thread_id(void);
 uint64_t lce_ps4_now_ms(void);
 #ifdef __cplusplus

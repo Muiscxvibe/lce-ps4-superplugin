@@ -33,7 +33,7 @@ typedef struct lce_script lce_script;
 
 typedef struct {
     size_t memory_cap;        /* bytes; 0 => default 16 MiB */
-    uint64_t step_budget;     /* instructions per outermost call; 0 => default 20,000,000 */
+    uint64_t step_budget;     /* instructions per VM lifetime; 0 => default 20,000,000 */
     uint32_t hook_interval;   /* count-hook granularity; 0 => 1000 */
     /* Event callbacks registered by the script are delivered through the host's
      * event bus. The host supplies the thunk that forwards lce_event payloads

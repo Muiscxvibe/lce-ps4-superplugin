@@ -156,7 +156,7 @@ extern "C" int lce_ps4_is_code(uintptr_t base, uintptr_t a) {
     return base && a >= base && a < base + 0x10c0354u && mapped(a, 1, 5) ? 1 : 0;
 }
 extern "C" uint64_t lce_ps4_thread_id(void) {
-    int32_t t = scePthreadGetthreadid();
-    return t > 0 ? (uint64_t)t : 0;
+    // r72's retained server scope puts this pthread identity in view.thread.
+    return (uint64_t)(uintptr_t)scePthreadSelf();
 }
 extern "C" uint64_t lce_ps4_now_ms(void) { return sceKernelGetProcessTime() / 1000u; }

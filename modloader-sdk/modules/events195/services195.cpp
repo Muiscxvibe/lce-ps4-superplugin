@@ -108,6 +108,10 @@ const Pin kPins[] = {
     {LCE195_RVA_SEND_PARTICLES, 16, {0x55,0x48,0x89,0xe5,0x41,0x57,0x41,0x56,0x41,0x55,0x41,0x54,0x53,0x48,0x81,0xec}},
     {LCE195_RVA_SEND_PARTICLES_BODY, 16, {0x49,0x89,0xff,0xbf,0x78,0x00,0x00,0x00,0x41,0x89,0xcd,0x41,0x89,0xd6,0x49,0x89}},
     {LCE195_RVA_PARTICLE_GET_ID, 4, {0x8b,0x47,0x28,0xc3}},
+    {LCE195_RVA_SEND_TINTED_PARTICLES, 16, {0x55,0x48,0x89,0xe5,0x41,0x57,0x41,0x56,0x41,0x55,0x41,0x54,0x53,0x48,0x81,0xec}},
+    {LCE195_RVA_TINTED_PARTICLES_PACKET_CALL, 16, {0xc5,0x7a,0x11,0x4c,0x24,0x08,0xc5,0x7a,0x11,0x04,0x24,0xe8,0x57,0xf9,0x48,0xff}},
+    {LCE195_RVA_TINTED_PARTICLES_PACKET_COLOR, 14, {0xc6,0x43,0x68,0x01,0xc5,0xfa,0x11,0x43,0x6c,0xc5,0xfa,0x11,0x53,0x70}},
+    {LCE195_RVA_TINTED_PARTICLE_TYPE_REF, 7, {0x48,0x8d,0x05,0xff,0x02,0xbb,0x00}},
     {LCE195_RVA_TAG_GET_OR_CREATE, 16, {0x55,0x48,0x89,0xe5,0x41,0x56,0x53,0x49,0x89,0xfe,0x49,0x8b,0x5e,0x30,0x48,0x85}},
     {LCE195_RVA_TAG_GET, 16, {0x55,0x48,0x89,0xe5,0x41,0x56,0x53,0x48,0x83,0xec,0x20,0x4c,0x8b,0x35,0xd6,0x46}},
     {LCE195_RVA_TAG_REMOVE, 16, {0x55,0x48,0x89,0xe5,0x41,0x57,0x41,0x56,0x53,0x48,0x83,0xec,0x58,0x4c,0x8b,0x3d}},
@@ -174,6 +178,11 @@ void verify_pins() {
     unbind_unless_pinned(s.n.send_particles, LCE195_RVA_SEND_PARTICLES);
     if (s.n.send_particles && (uintptr_t)s.n.send_particles == base() + LCE195_RVA_SEND_PARTICLES &&
         !(pin_ok(LCE195_RVA_SEND_PARTICLES_BODY) && pin_ok(LCE195_RVA_PARTICLE_GET_ID))) s.n.send_particles = nullptr;
+    unbind_unless_pinned(s.n.send_tinted_particles, LCE195_RVA_SEND_TINTED_PARTICLES);
+    if ((uintptr_t)s.n.send_tinted_particles == base() + LCE195_RVA_SEND_TINTED_PARTICLES &&
+        !(pin_ok(LCE195_RVA_TINTED_PARTICLES_PACKET_CALL) && pin_ok(LCE195_RVA_TINTED_PARTICLES_PACKET_COLOR) &&
+          pin_ok(LCE195_RVA_TINTED_PARTICLE_TYPE_REF) && pin_ok(LCE195_RVA_PARTICLE_GET_ID)))
+        s.n.send_tinted_particles = nullptr;
     // item NBT: each native's prologue and the tag-type call inside it (IntTag/DoubleTag/StringTag ctor, erase, map find)
     unbind_unless_pinned(s.n.tag_get_or_create, LCE195_RVA_TAG_GET_OR_CREATE);
     unbind_unless_pinned(s.n.tag_get, LCE195_RVA_TAG_GET);
@@ -223,7 +232,12 @@ extern "C" void lce195_services_fill(lce_api *a) {
     a->explode = lce195_explode; a->set_fire = lce195_set_fire; a->heal = lce195_heal; a->consume_held_item = lce195_consume_held_item;
     a->damage_entity = lce195_damage_entity; a->damage_held_item = lce195_damage_held_item; a->teleport = lce195_teleport;
     a->set_motion = lce195_set_motion;
-    a->capabilities2 |= lce195_services_capabilities2();
+    a->capabilities2 |= lce195_services_capabilities2() & ~LCE_CAP2_SVC_TINTED_PARTICLES;
+    if (a->struct_size >= offsetof(lce_api, spawn_tinted_particles) + sizeof(a->spawn_tinted_particles) &&
+        s.n.send_tinted_particles) {
+        a->spawn_tinted_particles = lce195_spawn_tinted_particles;
+        a->capabilities2 |= LCE_CAP2_SVC_TINTED_PARTICLES;
+    }
 #ifdef LCE_HAVE_SVC_1_3
     if (a->struct_size < offsetof(lce_api, spawn_particles) + sizeof(void *)) return;
     a->spawn_particles = lce195_spawn_particles;
@@ -260,6 +274,7 @@ extern "C" uint32_t lce195_services_capabilities2(void) {
 #ifdef LCE_HAVE_SVC_1_3
     if (s.n.send_particles) c |= LCE_CAP2_SVC_PARTICLES;
 #endif
+    if (s.n.send_tinted_particles) c |= LCE_CAP2_SVC_TINTED_PARTICLES;
 #ifdef LCE_HAVE_NBT_1_4
     if (nbt_ready() && s.n.inventory_set_changed) c |= LCE_CAP2_SVC_ITEM_NBT;
 #endif
@@ -1009,18 +1024,44 @@ uintptr_t particle_by_id(int32_t id) {
     return 0;
 }
 bool sane(double v) { return v == v && v > -1.0e9 && v < 1.0e9; }
+bool valid_particle_position(double x, double y, double z) {
+    return sane(x) && sane(y) && sane(z) && y >= -64 && y <= 320 &&
+           xyz_ok((int32_t)floor(x), 64, (int32_t)floor(z));
+}
 } // namespace
 extern "C" lce_status lce195_spawn_particles(lce_mod_ctx *, void *level, int32_t type_id, double x, double y, double z, uint32_t count,
                                              double dx, double dy, double dz, double speed) {
     const lce195_frame *f = frame_level(level);
     if (!f) return LCE_E_PHASE;
     if (!s.n.send_particles) return LCE_E_UNSUPPORTED;
-    if (!sane(x) || !sane(y) || !sane(z) || !xyz_ok((int32_t)floor(x), 64, (int32_t)floor(z)) || y < -64 || y > 320 ||
+    if (!valid_particle_position(x, y, z) ||
         count > 1000u || !(dx >= 0 && dx <= 64 && dy >= 0 && dy <= 64 && dz >= 0 && dz <= 64) || !(speed >= 0 && speed <= 100))
         return LCE_E_INVALID;
     uintptr_t type = particle_by_id(type_id);
     if (!type) return LCE_E_NOTFOUND;
     s.n.send_particles(f->view.level, type, 0, (int32_t)count, nullptr, 0, x, y, z, dx, dy, dz, speed);   // count 0 = one directed particle
+    return LCE_OK;
+}
+
+extern "C" lce_status lce195_spawn_tinted_particles(lce_mod_ctx *, void *level, uint32_t rgb, double x, double y, double z,
+                                                   uint32_t count, double spread) {
+    const lce195_frame *f = frame_level(level);
+    if (!f || !f->view.level || !lce195_ev_on_server_thread()) return LCE_E_PHASE;
+    if (!s.n.send_tinted_particles) return LCE_E_UNSUPPORTED;
+    if (!valid_particle_position(x, y, z) || rgb > 0xffffffu || count < 1 || count > 1000 ||
+        !(spread >= 0 && spread <= 64)) return LCE_E_INVALID;
+    uintptr_t type = 0;
+    int32_t id = -1;
+    if (!rd(base() + LCE195_RVA_TINTED_PARTICLE_TYPE, &type, sizeof type) ||
+        !type || type > UINTPTR_MAX - LCE195_OFF_PARTICLE_ID ||
+        !rd(type + LCE195_OFF_PARTICLE_ID, &id, sizeof id) || id < 0 || particle_by_id(id) != type)
+        return LCE_E_BACKEND;
+    const double red = ((rgb >> 16) & 0xffu) / 255.0;
+    const double green = ((rgb >> 8) & 0xffu) / 255.0;
+    const double blue = (rgb & 0xffu) / 255.0;
+    // The client uses RGB as particle parameters when the color flag is set.
+    s.n.send_tinted_particles(f->view.level, type, (int32_t)count, nullptr, 0,
+                             x, y, z, spread, spread, spread, 0.0, red, green, blue);
     return LCE_OK;
 }
 
@@ -1339,6 +1380,7 @@ extern "C" void lce195_natives_bind_rvas(lce195_natives *n, uintptr_t b) {
     n->tagset_erase = (void (*)(uintptr_t, uintptr_t))(b + LCE195_RVA_TAGSET_ERASE);
     n->sb_payload_ctor = (void (*)(void *, const void *, uint8_t *, int32_t))(b + LCE195_RVA_SB_PAYLOAD_CTOR);
     n->client_send = (void (*)(uintptr_t, lce195_pair *))(b + LCE195_RVA_CLIENT_SEND);
+    n->send_tinted_particles = reinterpret_cast<decltype(n->send_tinted_particles)>(b + LCE195_RVA_SEND_TINTED_PARTICLES);
 }
 
 #ifdef LCE195_HOST_TEST

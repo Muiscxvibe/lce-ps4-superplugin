@@ -218,12 +218,10 @@ def classify(prog, v):
     names = [inner(c) for c in full]
     simples = [simple(c) for c in full]
     for c, s in zip(full, simples):
-        if s == 'Potion' and ('alchemy' not in c):
-            return 'effect'    # 1.7.10-1.12 net/minecraft/potion/Potion is a status effect
-        if s == 'MobEffect':
+        if s == 'Potion' and c.startswith('net/minecraft/'):
+            return 'potion' if '/alchemy/' in c else 'effect'
+        if s == 'MobEffect' and c.startswith('net/minecraft/'):
             return 'effect'
-        if s == 'Potion':
-            return 'potion'
         if s == 'PotionType':
             return 'potion'
         if s == 'Enchantment':

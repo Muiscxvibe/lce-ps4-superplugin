@@ -12,6 +12,7 @@ from pathlib import Path
 from . import jar as J, extract as X, describe as D, assets as A, behaviour as B, mappings as M, vanilla as VN, configs as CFG
 from .interp import Obj, Ret, SField, Const, ClassRef, Lambda, str_val, Unknown
 from .extract import simple, inner, num, unwrap, classify, Holder
+import port_compat
 
 lce_modpack = VN.lce_modpack
 lce_port = VN.lce_port
@@ -260,7 +261,13 @@ class Porter:
                     key = None
                 if key:
                     used.add(key)
-            self.regmap[D.site_key(r.obj)] = first[(r.kind, path)] = {'kind': r.kind, 'name': r.name, 'key': key, 'reg': r}
+            site = D.site_key(r.obj)
+            previous = self.regmap.get(site)
+            if previous and previous['key'] and key and previous['key'] != key:
+                self.rep.add('manual', f'Registrations {previous["key"]} and {key} share an analysed factory site. '
+                                       'Verify references resolved from that factory.')
+            r.port_registration = {'kind': r.kind, 'name': r.name, 'key': key, 'reg': r}
+            self.regmap[site] = first[(r.kind, path)] = r.port_registration
             self.regs_by_kind.setdefault(r.kind, []).append(r)
             if key and r.name != path and r.kind in ('item', 'block'):
                 self.rep.add('auto', f'{r.kind} registry name "{r.name}" -> key {key}')
@@ -275,7 +282,7 @@ class Porter:
         self.item_entries, self.block_entries = {}, {}
         prog = self.facts.prog
         for r in self.regs_by_kind.get('block', []):
-            info = self.regmap[D.site_key(r.obj)]
+            info = r.port_registration
             if not info.get('key'):
                 continue
             f, notes = D.describe_block(prog, r, self.rr, self.era)
@@ -291,7 +298,7 @@ class Porter:
             self.rep.extend(notes)
             self.block_entries[r.path] = dict(key=info['key'], reg=r, fields=f)
         for r in self.regs_by_kind.get('item', []):
-            info = self.regmap[D.site_key(r.obj)]
+            info = r.port_registration
             if not info.get('key'):
                 continue
             if any(b['key'] == info['key'] for b in self.block_entries.values()):
@@ -467,7 +474,8 @@ class Porter:
         buf = io.StringIO()
         try:
             with contextlib.redirect_stdout(buf):
-                m, prep = lce_port.convert_java(fz, tmp, modid=ns, hints=hints, shapeless_as_shaped=bool(self.hints.get('shapeless_as_shaped')))
+                m, prep = lce_port.convert_java(fz, tmp, modid=ns, hints=hints,
+                                               shapeless_as_shaped=bool(self.hints.get('shapeless_as_shaped')), target_profile=None)
         except (SystemExit, Exception) as e:  # noqa: BLE001 - lce_port on untrusted JSON
             rep.add('manual', f'lce_port.convert_java failed on the asset layout ({type(e).__name__}: {e}); models/blockstates not converted')
             self.port_manifest = None
@@ -477,8 +485,6 @@ class Porter:
             for l in lines:
                 if k == 'errors' and ('no LCE 1.95 equivalent' in l or 'has no mapping' in l):
                     rep.add('manual', 'lce_port: ' + l)
-                elif k == 'skipped' and l.endswith('Java class files: behaviour (custom item/block logic, entities, worldgen, GUIs, events) must be reimplemented natively or via the event API'):
-                    continue
                 else:
                     rep.add(k, 'lce_port: ' + l)
         # copy textures into our output
@@ -1975,6 +1981,7 @@ def write_report(porter, checks, build_result):
         out.append(f'## {CAT_TITLES[k]} ({len(rep.lines[k])})')
         out += [f'- {m}' for m in rep.lines[k]] or ['- none']
         out.append('')
+    out += port_compat.report_section(port_compat.java_features(porter.jar.names()))
     out.append('## lce_modpack.py check')
     for prof, (rc, text) in checks.items():
         out.append(f'### `--profile {prof}` (exit {rc})')

@@ -1,5 +1,6 @@
 // Runs real Lua scripts through the sandbox against a fake lce_api.
 #include "../lce_script.h"
+#include "../../../include/lce_tick_pacing.h"
 #include "../../../loader/config_store.h"
 #ifndef LCE_HAVE_EV_1_3
 #define LCE_EV_ITEM_INVENTORY_TICK ((lce_event)(LCE_EV_ENTITY_TICK + 1))
@@ -22,6 +23,19 @@ static int g_checks;
 static std::vector<std::string> reg_items, reg_blocks, reg_recipes, reg_smelt, chats, subs, gives;
 static lce_phase fake_phase(lce_mod_ctx *) { return LCE_PHASE_REGISTER; }
 static void fake_log(lce_mod_ctx *, lce_log_level, const char *) {}
+static unsigned texture_calls;
+static lce_status ftexture(lce_mod_ctx *, const lce_texture_desc *d) {
+    ++texture_calls;
+    CHECK(d->struct_size == sizeof *d && d->width == 16 && d->height == 16);
+    const uint8_t pixel[] = {0, 127, 64, 255};
+    for (unsigned i = 0; i < 256; ++i) CHECK(memcmp(d->rgba + 4 * i, pixel, sizeof pixel) == 0);
+    if (!strcmp(d->key, "tex:item")) {
+        CHECK(d->atlas == LCE_TEXTURE_ITEMS);
+        return LCE_OK;
+    }
+    CHECK(!strcmp(d->key, "tex:block") && d->atlas == LCE_TEXTURE_TERRAIN);
+    return LCE_E_COLLISION;
+}
 static lce_status fi(lce_mod_ctx *, const lce_item_desc *d) { reg_items.push_back(d->key ? d->key : ""); return LCE_OK; }
 static std::vector<unsigned> item_tiers;
 static lce_status ftier(lce_mod_ctx *, const lce_item_desc *d) {
@@ -48,6 +62,46 @@ static lce_status ffitem(lce_mod_ctx *, const lce_item_desc *d) {
     return LCE_OK;
 }
 static lce_status fb(lce_mod_ctx *, const lce_block_desc *d) { reg_blocks.push_back(d->key ? d->key : ""); return LCE_OK; }
+static unsigned block_descriptor_calls;
+static lce_status fblock_desc(lce_mod_ctx *, const lce_block_desc *d) {
+    ++block_descriptor_calls;
+    CHECK(d->struct_size == sizeof *d && d->key);
+    if (!strcmp(d->key, "m:plain")) {
+        CHECK(!strcmp(d->name, d->key) && d->hardness_milli == 1500 && !d->resistance_milli);
+        for (const char *face : d->texture) CHECK(face && !strcmp(face, "m:plain"));
+        CHECK(!d->block_entity_slots && !d->variant_count && d->shape == LCE_SHAPE_CUBE);
+    } else if (!strcmp(d->key, "m:chest")) {
+        CHECK(d->block_entity_slots == 27 && d->material == LCE_MAT_WOOD && d->sound == LCE_SOUND_WOOD);
+        CHECK(!strcmp(d->name, "Wooden Chest") && !strcmp(d->harvest_tool, "axe"));
+        CHECK(!strcmp(d->texture[0], "m:bottom") && !strcmp(d->texture[1], "m:top"));
+        CHECK(!strcmp(d->texture[2], "m:north") && !strcmp(d->texture[5], "m:side"));
+    } else if (!strcmp(d->key, "m:slant")) {
+        CHECK(d->variant_count == 2 && !d->variant_names[0] && !strcmp(d->variant_names[1], "Top"));
+        for (int i = 0; i < 6; ++i) CHECK(!d->variant_textures[i]);
+        CHECK(!d->variant_textures[6] && !strcmp(d->variant_textures[7], "m:top") && !d->variant_textures[8]);
+        CHECK(d->shape == LCE_SHAPE_BOXES && d->box_count == 2 && d->box_sets == 2);
+        const uint8_t boxes[] = {0,0,0,16,8,16, 0,8,0,4,16,16, 0,8,0,16,16,16, 0,0,0,4,8,16};
+        CHECK(!memcmp(d->boxes, boxes, sizeof boxes));
+        CHECK(d->flags == (LCE_BLOCK_FLAG_TRANSPARENT | LCE_BLOCK_FLAG_NO_COLLIDE | LCE_BLOCK_FLAG_RANDOM_TICK));
+        CHECK(d->light_emission == 12 && d->drop_min == 2 && d->drop_max == 4 && !strcmp(d->drop, "m:dust"));
+        CHECK(d->flammability == 5 && d->slipperiness_milli == 980 && d->harvest_tier == LCE_TIER_WOOD);
+    } else if (!strcmp(d->key, "m:rotating")) {
+        CHECK(d->shape == LCE_SHAPE_BOXES && d->box_count == 1 && d->box_sets == 4);
+        const uint8_t boxes[] = {1,2,3,5,6,7, 9,2,1,13,6,5, 11,2,9,15,6,13, 3,2,11,7,6,15};
+        CHECK(!memcmp(d->boxes, boxes, sizeof boxes));
+    } else if (!strcmp(d->key, "m:single")) {
+        const uint8_t box[] = {0,0,0,16,7,16};
+        CHECK(d->shape == LCE_SHAPE_BOX && !memcmp(d->box, box, sizeof box) && !d->boxes && !d->box_sets);
+    } else if (!strcmp(d->key, "m:full")) {
+        CHECK(d->variant_count == 16 && d->box_count == 8 && d->box_sets == 16);
+        CHECK(!strcmp(d->variant_names[15], "Last") && !strcmp(d->variant_textures[95], "m:last"));
+        CHECK(d->boxes[16 * 8 * 6 - 1] == 16);
+    } else {
+        CHECK(!strcmp(d->key, "m:denied") && d->block_entity_slots == 54);
+        return LCE_E_UNSUPPORTED;
+    }
+    return LCE_OK;
+}
 static lce_status fr(lce_mod_ctx *, const lce_recipe_desc *d) {
     char b[128]; snprintf(b, sizeof b, "%s->%s x%u %s w%u h%u", d->key, d->result, d->result_count, d->shapeless?"less":"shaped", d->width, d->height);
     reg_recipes.push_back(b); return LCE_OK; }
@@ -66,6 +120,32 @@ static lce_status ffeature(lce_mod_ctx *, const lce_feature_desc *d) {
     CHECK(d->size == 8 && d->per_chunk == 4 && d->min_y == 5 && d->max_y == 60 && d->rarity == 2);
     CHECK(d->biome_count == 2 && !strcmp(d->biomes[0], "minecraft:plains") && !strcmp(d->biomes[1], "minecraft:forest"));
     return LCE_OK;
+}
+static int biome_calls, structure_calls;
+static lce_status fbiome(lce_mod_ctx *, const lce_biome_desc *d) {
+    ++biome_calls;
+    CHECK(d->struct_size == sizeof *d && d->key);
+    if (!strcmp(d->key, "m:ambient")) {
+        CHECK(!d->name && !d->top_block && !d->filler_block && !d->features && !d->feature_count);
+        CHECK(!d->temperature_milli && !d->weight && !d->sky_rgb);
+        return LCE_E_PHASE;
+    }
+    CHECK(!strcmp(d->key, "m:grove") && !strcmp(d->name, "Amber Grove"));
+    CHECK(!strcmp(d->top_block, "minecraft:grass") && !strcmp(d->filler_block, "minecraft:dirt"));
+    CHECK(d->temperature_milli == 815 && d->rainfall_milli == 620);
+    CHECK(d->grass_rgb == 0x556600 && d->foliage_rgb == 0x777700 && d->water_rgb == 0x334422 && d->sky_rgb == 0xffd26b);
+    CHECK(d->weight == 36 && d->height_base_milli == 125 && d->height_variation_milli == 280);
+    CHECK(d->feature_count == 2 && !strcmp(d->features[0], "m:ruins") && !strcmp(d->features[1], "m:ore"));
+    return LCE_OK;
+}
+static lce_status fstructure(lce_mod_ctx *, const lce_structure_desc *d) {
+    ++structure_calls;
+    CHECK(d->struct_size == sizeof *d && !strcmp(d->key, "m:ruins"));
+    CHECK(d->size_x == 2 && d->size_y == 1 && d->size_z == 3 && d->palette_count == 3);
+    CHECK(!strcmp(d->palette[0], "minecraft:air") && !strcmp(d->palette[1], "minecraft:stone") && !strcmp(d->palette[2], "minecraft:dirt"));
+    const uint16_t cells[] = {0, 2, 1, 0, 1, 2};
+    CHECK(!memcmp(d->blocks, cells, sizeof cells));
+    return structure_calls == 2 ? LCE_E_COLLISION : LCE_OK;
 }
 static lce_status fsub(lce_mod_ctx *, lce_event ev, lce_event_fn, void *) { subs.push_back(std::to_string(ev)); return LCE_OK; }
 static lce_status fchat(lce_mod_ctx *, void *, const char *m) { chats.push_back(m ? m : ""); return LCE_OK; }
@@ -91,8 +171,110 @@ static int run(lce_script *s, const char *src, char *err, uint32_t cap) {
     return lce_script_run_main(s, "main.lua", src, strlen(src), err, cap);
 }
 
+static void test_tick_pacing(const lce_api &api) {
+    lce_ev_tick event{sizeof event, UINT64_MAX};
+    CHECK(lce_tick_pacing_due(&event, UINT32_MAX, 0));
+    CHECK(lce_tick_pacing_due(&event, 1, 0));
+    CHECK(!lce_tick_pacing_due(&event, 0, 0));
+    CHECK(!lce_tick_pacing_due(&event, 4, 4));
+    CHECK(!lce_tick_pacing_due(nullptr, 4, 3));
+    event.struct_size = sizeof event.struct_size;
+    CHECK(!lce_tick_pacing_due(&event, 4, 3));
+
+    lce_api paced_api = api;
+    paced_api.capabilities |= LCE_CAP_EV_TICK;
+    lce_script *s = lce_script_new(&paced_api, nullptr, nullptr);
+    lce_script *another = lce_script_new(&paced_api, nullptr, nullptr);
+    CHECK(s && another);
+    char err[256];
+    const char *source = R"(
+        hits = {}
+        local callback = function(e) hits[#hits + 1] = e.tick end
+        lce.subscribe('ServerTick', function() error('superseded') end)
+        local ok, status = lce.subscribe_tick(4, callback, 1)
+        assert(ok and status == 0)
+        for _, interval in ipairs({0, -1, 1.5, 4294967296}) do
+            assert(not pcall(lce.subscribe_tick, interval, callback))
+        end
+        assert(not pcall(lce.subscribe_tick, 4, callback, -1))
+        assert(not pcall(lce.subscribe_tick, 4, callback, 4))
+        assert(not pcall(lce.subscribe_tick, 4, {}))
+    )";
+    CHECK(run(s, source, err, sizeof err) == LCE_OK);
+    CHECK(lce_script_event(s, LCE_EV_SERVER_TICK, &event) == 0);
+    CHECK(lce_script_event(s, LCE_EV_SERVER_TICK, nullptr) == 0);
+    event.struct_size = sizeof event;
+    for (uint64_t tick : {1, 2, 4, 9, 14}) {
+        event.tick = tick;
+        CHECK(lce_script_event(s, LCE_EV_SERVER_TICK, &event) == 0);
+    }
+    CHECK(run(another, "local t = lce.tick_stats(); assert(t.callbacks_run == 0 and t.callbacks_skipped == 0)", err, sizeof err) == LCE_OK);
+    CHECK(run(s, "local t = lce.tick_stats(); assert(t.callbacks_run == 2 and t.callbacks_skipped == 5); assert(#hits == 2 and hits[1] == 1 and hits[2] == 9)", err, sizeof err) == LCE_OK);
+    CHECK(run(s, "registerEvent('ServerTickEvent', function(e) hits[#hits+1] = e.tick end)", err, sizeof err) == LCE_OK);
+    CHECK(lce_script_event(s, LCE_EV_SERVER_TICK, &event) == 0);
+    CHECK(run(s, "assert(#hits == 3 and hits[3] == 14); local t = lce.tick_stats(); assert(t.callbacks_run == 2 and t.callbacks_skipped == 5)", err, sizeof err) == LCE_OK);
+    CHECK(run(s, "assert(lce.subscribe_tick(4294967295, function() error('callback failure') end))", err, sizeof err) == LCE_OK);
+    event.tick = UINT32_MAX;
+    CHECK(lce_script_event(s, LCE_EV_SERVER_TICK, &event) == 0);
+    CHECK(run(s, "assert(lce.tick_stats().callbacks_run == 3)", err, sizeof err) == LCE_OK);
+    lce_script_stats stats{};
+    lce_script_get_stats(s, &stats);
+    CHECK(stats.events == 4 && stats.errors == 1);
+    lce_script_free(s);
+    lce_script_free(another);
+
+    lce_api unsupported_api = api;
+    unsupported_api.capabilities &= ~LCE_CAP_EV_TICK;
+    s = lce_script_new(&unsupported_api, nullptr, nullptr);
+    CHECK(s);
+    CHECK(run(s, "local ok, status = lce.subscribe_tick(1, function() end); assert(not ok and status == -4)", err, sizeof err) == LCE_OK);
+    lce_script_get_stats(s, &stats);
+    CHECK(stats.events == 0);
+    lce_script_free(s);
+    subs.clear();
+}
+
 int main() {
     lce_api api = make_api();
+    test_tick_pacing(api);
+
+    { lce_api a = api; a.capabilities = LCE_CAP_TEXTURES; a.register_texture = ftexture;
+      lce_script *s = lce_script_new(&a, nullptr, nullptr); CHECK(s); char err[256];
+      const char *registration = R"lua(
+        local rgba = string.rep(string.char(0, 127, 64, 255), 256)
+        local ok, status = lce.register_texture{key = 'tex:item', atlas = 'items', rgba = rgba}
+        assert(ok and status == 0)
+        ok, status = lce.register_texture{key = 'tex:block', atlas = 'terrain', rgba = rgba}
+        assert(not ok and status == -2)
+        for _, key in ipairs({'', 'tex:item\0other', string.rep('x',64), 42}) do
+          assert(not pcall(lce.register_texture, {key = key, atlas = 'items', rgba = rgba}))
+        end
+        for _, atlas in ipairs({'armor', 'entity', 'icon', 'items\0', 0}) do
+          assert(not pcall(lce.register_texture, {key = 'tex:item', atlas = atlas, rgba = rgba}))
+        end
+        for _, pixels in ipairs({'', rgba:sub(2), rgba .. 'x', 1024, {0}}) do
+          assert(not pcall(lce.register_texture, {key = 'tex:item', atlas = 'items', rgba = pixels}))
+        end
+      )lua";
+      CHECK(run(s, registration, err, sizeof err) == LCE_OK);
+      CHECK(texture_calls == 2);
+      lce_script_stats st{}; lce_script_get_stats(s, &st); CHECK(st.denied == 1);
+      lce_script_free(s);
+
+      const char *unsupported = R"lua(
+        local ok, status = lce.register_texture{key = 'tex:item', atlas = 'items', rgba = string.rep('\0', 1024)}
+        assert(not ok and status == -4)
+      )lua";
+      for (int i = 0; i < 3; ++i) {
+          a.capabilities = i == 0 ? 0u : LCE_CAP_TEXTURES;
+          a.struct_size = i == 1 ? offsetof(lce_api, register_texture) : sizeof a;
+          a.register_texture = i == 2 ? nullptr : ftexture;
+          s = lce_script_new(&a, nullptr, nullptr); CHECK(s);
+          CHECK(run(s, unsupported, err, sizeof err) == LCE_OK);
+          lce_script_free(s);
+      }
+      CHECK(texture_calls == 2);
+    }
 
     { lce_api a = api; a.register_item = ftier;
       lce_script *s = lce_script_new(&a, nullptr, nullptr); CHECK(s); char err[256];
@@ -137,9 +319,174 @@ int main() {
       CHECK(run(s, "local ok, rc = lce.register_feature{key='m:ore', kind=1, block='m:ruby_ore', block2='minecraft:stone', size=8, per_chunk=4, min_y=5, max_y=60, rarity=2, biomes={'minecraft:plains','minecraft:forest'}}; assert(ok and rc==0)", err, sizeof err) == LCE_OK);
       CHECK(feature_calls == 1);
       CHECK(run(s, "assert(not pcall(function() lce.register_feature{key='m:ore', size=65536} end)); assert(not pcall(function() lce.register_feature{key='m:ore', biomes={123}} end))", err, sizeof err) == LCE_OK);
+      CHECK(run(s, "assert(not pcall(lce.register_feature, {key='m:ore' .. string.char(0)}))\n"
+                   "assert(not pcall(lce.register_feature, {key='m:ore', biomes={'minecraft:plains' .. string.char(0)}}))\n"
+                   "assert(not pcall(lce.register_feature, {key='m:ore', biomes=setmetatable({}, {__len=function() return -1 end})}))", err, sizeof err) == LCE_OK);
       CHECK(feature_calls == 1); lce_script_free(s);
       a.register_feature = nullptr; s = lce_script_new(&a, nullptr, nullptr); CHECK(s);
       CHECK(run(s, "local ok = lce.register_feature{key='m:ore', kind=1}; assert(not ok)", err, sizeof err) == LCE_OK);
+      lce_script_free(s);
+    }
+
+    { lce_api a = api; a.register_block = fblock_desc;
+      lce_script *s = lce_script_new(&a, nullptr, nullptr); CHECK(s);
+      char err[256];
+      const char *src =
+        "assert(lce.register_block{key='m:plain', texture='m:plain'})\n"
+        "assert(lce.register_block{key='m:chest', name='Wooden Chest', material=1, sound=1, harvest_tool='axe',"
+        " storage_slots=27, texture={all='m:all',side='m:side',bottom='m:bottom',top='m:top',north='m:north'}})\n"
+        "assert(lce.register_block{key='m:slant',texture='m:plain',variants={{},{name='Top',texture={up='m:top'}}},"
+        " variant_boxes={{{0,0,0,16,8,16},{0,8,0,4,16,16}},{{0,8,0,16,16,16},{0,0,0,4,8,16}}},"
+        " transparent=true,no_collision=true,random_tick=true,light_emission=12,drop='m:dust',drop_min=2,drop_max=4,"
+        " flammability=5,slipperiness_milli=980,harvest_tier=1})\n"
+        "assert(lce.register_block{key='m:rotating',texture='m:plain',variants={{},{},{},{}},"
+        " boxes={{1,2,3,5,6,7}},rotate_boxes=true})\n"
+        "assert(lce.register_block{key='m:single',texture='m:plain',box={0,0,0,16,7,16}})\n"
+        "local variants, sets = {}, {}\n"
+        "for v=1,16 do variants[v]={}; sets[v]={}; for b=1,8 do sets[v][b]={0,0,0,1,b,16} end end\n"
+        "variants[16]={name='Last',texture={east='m:last'}}\n"
+        "assert(lce.register_block{key='m:full',texture='m:plain',variants=variants,variant_boxes=sets})\n"
+        "local ok,rc=lce.register_block{key='m:denied',texture='m:plain',storage_slots=54}; assert(not ok and rc~=0)\n";
+      CHECK(run(s, src, err, sizeof err) == LCE_OK);
+      lce_script_stats st; lce_script_get_stats(s, &st);
+      CHECK(block_descriptor_calls == 7 && st.blocks == 6 && st.denied == 1);
+      src =
+        "local function rejects(desc) desc.key='m:invalid'; desc.texture=desc.texture or 'm:plain';"
+        " assert(not pcall(lce.register_block,desc)) end\n"
+        "rejects{storage_slots=65536}; rejects{storage_slots=9.5}; rejects{storage_slots=-9}\n"
+        "rejects{texture='m:plain\\0truncated'}; rejects{transparent=1}\n"
+        "rejects{variants={{name='Base'},{}}}; rejects{variants={{texture='m:base'},{}}}; rejects{variants={{}}}\n"
+        "rejects{variants={{},{},[30]={}}}; rejects{variants={{},'bad'}}\n"
+        "local box={0,0,0,16,8,16}\n"
+        "rejects{box=box,boxes={box}}; rejects{boxes={box},rotate_boxes=true}; rejects{boxes={}}\n"
+        "rejects{box={0,0,0,17,8,16}}; rejects{box={0,0,0,0,8,16}}; rejects{box={0,0,0,16,8,15.5}}\n"
+        "rejects{variants={{},{}},variant_boxes={{box},{box,box}}}; rejects{variant_boxes={{box},{box}}}\n";
+      CHECK(run(s, src, err, sizeof err) == LCE_OK);
+      CHECK(block_descriptor_calls == 7);
+      lce_script_free(s);
+      a.register_block = nullptr; s = lce_script_new(&a, nullptr, nullptr); CHECK(s);
+      CHECK(run(s, "local ok,rc=lce.register_block{key='m:none',texture='m:plain'}; assert(not ok and rc~=0)", err, sizeof err) == LCE_OK);
+      lce_script_free(s);
+    }
+
+    { static unsigned calls;
+      lce_api a = api;
+      a.register_entity2 = +[](lce_mod_ctx *, const lce_entity_desc2 *d) -> lce_status {
+        ++calls;
+        CHECK(d->struct_size == sizeof *d && d->key && d->base_mob && !strcmp(d->base_mob, "minecraft:zombie"));
+        CHECK(!d->texture && !d->name && !d->drops && !d->drop_count && !d->width_milli && !d->height_milli);
+        if (!strcmp(d->key, "m:default")) {
+          CHECK(!d->max_health_milli && !d->move_speed_milli && !d->attack_damage_milli && !d->spawn_weight);
+          CHECK(!d->goals && !d->goal_count && !d->spawn_biomes && !d->spawn_biome_count && !d->egg_primary_rgb && !d->egg_secondary_rgb);
+          CHECK(!d->sound_ambient && !d->sound_hurt && !d->sound_death);
+          return LCE_OK;
+        }
+        CHECK(!strcmp(d->key, "m:grove") && d->max_health_milli == 30000 && d->move_speed_milli == 280 && d->attack_damage_milli == 4000);
+        CHECK(d->spawn_weight == 10 && d->category == LCE_MOB_MONSTER && d->min_group == 1 && d->max_group == 2);
+        CHECK(d->egg_primary_rgb == 1 && !d->egg_secondary_rgb);
+        CHECK(!strcmp(d->sound_ambient, "minecraft:entity.zombie.ambient") && !strcmp(d->sound_hurt, "minecraft:entity.zombie.hurt") && !strcmp(d->sound_death, "minecraft:entity.zombie.death"));
+        CHECK(d->goal_count == 2 && d->goals[0].kind == LCE_AI_WANDER && d->goals[0].priority == 3 && d->goals[0].speed_milli == 1200 && !d->goals[0].param);
+        CHECK(d->goals[1].kind == LCE_AI_AVOID_ENTITY && !strcmp(d->goals[1].param, "minecraft:player"));
+        CHECK(d->spawn_biome_count == 2 && !strcmp(d->spawn_biomes[0], "minecraft:plains") && !strcmp(d->spawn_biomes[1], "minecraft:forest"));
+        return LCE_E_COLLISION;
+      };
+      lce_script *s = lce_script_new(&a, nullptr, nullptr); CHECK(s); char err[256];
+      CHECK(run(s,
+        "assert(lce.register_entity{key='m:default',base_mob='minecraft:zombie',goals={},spawn_biomes={}})\n"
+        "local ok,rc=lce.register_entity{key='m:grove',base_mob='minecraft:zombie',max_health_milli=30000,"
+        "move_speed_milli=280,attack_damage_milli=4000,category=1,spawn_weight=10,min_group=1,max_group=2,spawn_egg=true,"
+        "sound_ambient='minecraft:entity.zombie.ambient',sound_hurt='minecraft:entity.zombie.hurt',sound_death='minecraft:entity.zombie.death',"
+        "goals={{kind=1,priority=3,speed_milli=1200},{kind=10,param='minecraft:player'}},spawn_biomes={'minecraft:plains','minecraft:forest'}}\n"
+        "assert(not ok and rc==-2)\n"
+        "ok,rc=lce.register_entity{key='m:custom',base_mob='minecraft:zombie',texture='m:custom'}; assert(not ok and rc==-4)", err, sizeof err) == LCE_OK);
+      CHECK(run(s,
+        "for _,t in ipairs({{}, {key='m:bad'}, {key='m:bad' .. string.char(0)},"
+        "{key='m:bad',base_mob='minecraft:zombie',attack_damage_milli=2048001},"
+        "{key='m:bad',base_mob='minecraft:zombie',min_group=-1},"
+        "{key='m:bad',base_mob='minecraft:zombie',spawn_weight=4294967296},"
+        "{key='m:bad',base_mob='minecraft:zombie',category=1.5},"
+        "{key='m:bad',base_mob='minecraft:zombie',spawn_egg=1},"
+        "{key='m:bad',base_mob='minecraft:zombie',goals={{kind=0}}},"
+        "{key='m:bad',base_mob='minecraft:zombie',goals={{kind=1,priority=65536}}},"
+        "{key='m:bad',base_mob='minecraft:zombie',spawn_biomes={[2]='minecraft:forest'}}}) do "
+        "assert(not pcall(lce.register_entity,t)) end\n"
+        "assert(not pcall(lce.register_entity,{key='m:bad',base_mob='minecraft:zombie' .. string.char(0)}))\n"
+        "local big={}; for n=1,257 do big[n]='minecraft:plains' end; "
+        "assert(not pcall(lce.register_entity,{key='m:bad',base_mob='minecraft:zombie',spawn_biomes=big}))\n"
+        "assert(lce.register_entity(setmetatable({key='m:default',base_mob='minecraft:zombie'}, {__index=function() error('metamethod') end})))", err, sizeof err) == LCE_OK);
+      CHECK(calls == 3); lce_script_free(s);
+      a.struct_size = (uint32_t)offsetof(lce_api, register_entity2);
+      s = lce_script_new(&a, nullptr, nullptr); CHECK(s);
+      CHECK(run(s, "local ok,rc=lce.register_entity{key='m:old',base_mob='minecraft:zombie'}; assert(not ok and rc==-4)", err, sizeof err) == LCE_OK);
+      CHECK(calls == 3); lce_script_free(s);
+    }
+
+    {
+      lce_api a = api;
+      a.capabilities = LCE_CAP_BIOMES | LCE_CAP_STRUCTURES;
+      a.register_biome = fbiome;
+      a.register_structure = fstructure;
+      lce_script *s = lce_script_new(&a, nullptr, nullptr); CHECK(s); char err[256];
+      CHECK(run(s, R"lua(
+        local biome = {
+          key='m:grove', name='Amber Grove', top_block='minecraft:grass', filler_block='minecraft:dirt',
+          temperature_milli=815, rainfall_milli=620, grass_rgb=0x556600, foliage_rgb=0x777700,
+          water_rgb=0x334422, sky_rgb=0xffd26b, weight=36, height_base_milli=125,
+          height_variation_milli=280, features={'m:ruins', 'm:ore'},
+        }
+        local function ignore_meta() error('metamethod called') end
+        setmetatable(biome.features, {__len=ignore_meta, __index=ignore_meta})
+        local ok, status = lce.register_biome(biome)
+        assert(ok and status == 0)
+        ok, status = lce.register_biome(setmetatable({key='m:ambient'}, {__index=ignore_meta}))
+        assert(not ok and status == -3)
+        local structure = {
+          key='m:ruins', size_x=2, size_y=1, size_z=3,
+          palette={'minecraft:air', 'minecraft:stone', 'minecraft:dirt'}, blocks={0, 2, 1, 0, 1, 2},
+        }
+        ok, status = lce.register_structure(structure)
+        assert(ok and status == 0)
+        ok, status = lce.register_structure(structure)
+        assert(not ok and status == -2)
+
+        for _, invalid in ipairs({
+          {}, {key='m:bad\0name'}, {key='m:b', weight=65536}, {key='m:b', rainfall_milli=-1},
+          {key='m:b', sky_rgb=4294967296}, {key='m:b', temperature_milli='1000'},
+          {key='m:b', features={[1]='m:one', [3]='m:three'}}, {key='m:b', name=23},
+        }) do
+          assert(not pcall(lce.register_biome, invalid))
+        end
+        for _, bad_cells in ipairs({{0, 2, 1, 0, 1}, {0, 2, 1, 0, 1, 2, 0},
+          {0, 2, 1, nil, 1, 2}, {0, 2, 1, -1, 1, 2}, {0, 2, 1, 3, 1, 2}, {0, 2, 1, 1.5, 1, 2}}) do
+          structure.blocks = bad_cells
+          assert(not pcall(lce.register_structure, structure))
+        end
+        structure.blocks = {0, 2, 1, 0, 1, 2}
+        structure.palette[3] = false
+        assert(not pcall(lce.register_structure, structure))
+        structure.palette[3] = 'minecraft:dirt'
+        structure.size_x = 65
+        assert(not pcall(lce.register_structure, structure))
+      )lua", err, sizeof err) == LCE_OK);
+      CHECK(biome_calls == 2 && structure_calls == 2);
+      lce_script_stats stats{}; lce_script_get_stats(s, &stats); CHECK(stats.denied == 2);
+      lce_script_free(s);
+
+      a.capabilities = 0;
+      s = lce_script_new(&a, nullptr, nullptr); CHECK(s);
+      const char *unsupported = R"lua(
+        for _, register in ipairs({lce.register_biome, lce.register_structure}) do
+          local ok, status = register({})
+          assert(not ok and status == -4)
+        end
+      )lua";
+      CHECK(run(s, unsupported, err, sizeof err) == LCE_OK);
+      lce_script_free(s);
+      a.capabilities = LCE_CAP_BIOMES | LCE_CAP_STRUCTURES;
+      a.struct_size = offsetof(lce_api, register_biome);
+      s = lce_script_new(&a, nullptr, nullptr); CHECK(s);
+      CHECK(run(s, unsupported, err, sizeof err) == LCE_OK);
+      CHECK(biome_calls == 2 && structure_calls == 2);
       lce_script_free(s);
     }
 
@@ -272,6 +619,30 @@ int main() {
       CHECK(tags["speed"].type == LCE_NBT_DOUBLE && tags["owner"].type == LCE_NBT_STRING);
       lce_script_free(s);
     }
+
+#ifdef LCE_HAVE_TINTED_PARTICLES_1_12
+    { lce_api api = make_api();
+      api.spawn_tinted_particles = +[](lce_mod_ctx *, void *level, uint32_t rgb, double x, double y, double z,
+                                      uint32_t count, double spread) -> lce_status {
+          CHECK(!level && rgb == 0x1280ff && x == 1.5 && y == 64 && z == -2.25);
+          CHECK((count == 1 && spread == 0) || (count == 7 && spread == 1.25));
+          return LCE_OK;
+      };
+      lce_script *s = lce_script_new(&api, nullptr, nullptr); CHECK(s);
+      char err[256];
+      CHECK(run(s,
+        "assert(lce.spawn_tinted_particles(nil, 0x1280ff, 1.5, 64, -2.25) == 0)\n"
+        "assert(lce.spawn_tinted_particles(nil, 0x1280ff, 1.5, 64, -2.25, 7, 1.25) == 0)\n"
+        "assert(not pcall(lce.spawn_tinted_particles, nil, 0x1000000, 1.5, 64, -2.25))\n"
+        "assert(not pcall(lce.spawn_tinted_particles, nil, 0, 1.5, 64, -2.25, 0))\n", err, sizeof err) == LCE_OK);
+      lce_script_free(s);
+
+      api.struct_size = offsetof(lce_api, spawn_tinted_particles);
+      s = lce_script_new(&api, nullptr, nullptr); CHECK(s);
+      CHECK(run(s, "assert(lce.spawn_tinted_particles(nil, 0, 1, 64, 2) == -4)\n", err, sizeof err) == LCE_OK);
+      lce_script_free(s);
+    }
+#endif
 
 #ifdef LCE_HAVE_ENTITY_NBT_1_5
     // ---- 2e. API 1.5: entity NBT (read-only vanilla paths) and persistent entity mod data ----
