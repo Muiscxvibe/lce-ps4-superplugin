@@ -44,12 +44,13 @@ git add -A
 git commit -q -m "Publish plugin build $build" || true
 git push -q origin HEAD:main
 cp "$prx" "/tmp/mc195_lce_session_${build}.prx"
-gh release create "$build" "/tmp/mc195_lce_session_${build}.prx" --title "$build" \
+# Online builds embed the anticheat report key: their releases are drafts (owner-only), never public.
+gh release create "$build" "/tmp/mc195_lce_session_${build}.prx" --draft --title "$build" \
   --notes "Official LCE Server plugin build $build (PRX sha256 $sha)" >/dev/null 2>&1 \
   || gh release upload "$build" "/tmp/mc195_lce_session_${build}.prx" --clobber
 rm -f "/tmp/mc195_lce_session_${build}.prx"
 stage=$(mktemp -d); cp "$prx" "$stage/mc195_lce_session.prx"
-gh release create "session-plugin-v$version" "$stage/mc195_lce_session.prx" --title "Auto-update $build" \
+gh release create "session-plugin-v$version" "$stage/mc195_lce_session.prx" --draft --title "Auto-update $build" \
   --notes "Signed auto-update channel for $build" >/dev/null 2>&1 \
   || gh release upload "session-plugin-v$version" "$stage/mc195_lce_session.prx" --clobber
 rm -rf "$stage"
