@@ -4,3 +4,5 @@ client_report_key.h
 build/
 *.o
 *.before-*
+__pycache__/
+*.pyc
