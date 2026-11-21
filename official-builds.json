@@ -1,12 +1,9 @@
 {
   "schema": 1,
-  "current": "r8-anticheat-20261121002936",
+  "current": "r10-public-20261121012513",
   "builds": {
-    "r8-anticheat-20261121002936": {
-      "prx_sha256": "20b54ca1549d00954819eae521c508074adc0d048b46782f8e65a6d7ffd5f4b3",
-      "game_text_sha256": [
-        "b5529a2f2c14278bd2c55cff2f02ac5a216efc81613c19b54ab5a8975e4d0778"
-      ]
+    "r10-public-20261121012513": {
+      "prx_sha256": "3d714b291277bba46141aa8d892af98b8876023e94d79cc8dcfd2b601d76c2d5"
     }
   },
   "outdated_plugin_builds": [
@@ -33,7 +30,8 @@
     "r8-anticheat-20261117225049",
     "r8-anticheat-20261119111013",
     "r8-anticheat-20261119124942",
-    "r8-anticheat-20261120184452"
+    "r8-anticheat-20261120184452",
+    "r8-anticheat-20261121002936"
   ],
   "game_version": [
     "01.95",
