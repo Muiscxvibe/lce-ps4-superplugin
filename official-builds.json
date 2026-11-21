@@ -3,7 +3,10 @@
   "current": "r8-anticheat-20261121002936",
   "builds": {
     "r8-anticheat-20261121002936": {
-      "prx_sha256": "20b54ca1549d00954819eae521c508074adc0d048b46782f8e65a6d7ffd5f4b3"
+      "prx_sha256": "20b54ca1549d00954819eae521c508074adc0d048b46782f8e65a6d7ffd5f4b3",
+      "game_text_sha256": [
+        "b5529a2f2c14278bd2c55cff2f02ac5a216efc81613c19b54ab5a8975e4d0778"
+      ]
     }
   },
   "outdated_plugin_builds": [
