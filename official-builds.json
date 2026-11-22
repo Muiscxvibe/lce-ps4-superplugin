@@ -1,12 +1,13 @@
 {
   "schema": 1,
-  "current": "r10-public-20261121012513",
+  "current": "r10-public-20261122120512",
   "builds": {
-    "r10-public-20261121012513": {
-      "prx_sha256": "3d714b291277bba46141aa8d892af98b8876023e94d79cc8dcfd2b601d76c2d5"
+    "r10-public-20261122120512": {
+      "prx_sha256": "39b6f922935cd10fdfa87f817e6a2ada315fd04250ec8ef8b22019244dbc84f3"
     }
   },
   "outdated_plugin_builds": [
+    "r10-public-20261121012513",
     "r8-anticheat-20261117003204",
     "r8-anticheat-20261117051720",
     "r8-anticheat-20261117052841",
