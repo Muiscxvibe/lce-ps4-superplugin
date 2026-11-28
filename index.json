@@ -1,19 +1,19 @@
 {
   "items": [
     {
-      "description": "Official build r10-public-20261127122523",
+      "description": "Official build r10-public-20261128104810",
       "files": [
         {
           "asset": "mc195_lce_session.prx",
           "path": "mc195_lce_session.prx",
-          "sha256": "08eb6cdda659234fd6dbbedb6e37a606aad6ce1e89220f075f3866a5d238e16e",
-          "size": 9931840,
-          "url": "https://github.com/Muiscxvibe/lce-ps4-superplugin/releases/download/session-plugin-v20261127122523/mc195_lce_session.prx"
+          "sha256": "8ac00b3d4fa676d6537c9b4704c5b5cbf149f5ceb525070a785cc58a230c38dc",
+          "size": 9948448,
+          "url": "https://github.com/Muiscxvibe/lce-ps4-superplugin/releases/download/session-plugin-v20261128104810/mc195_lce_session.prx"
         }
       ],
       "id": "session-plugin",
       "name": "LCE Server plugin",
-      "version": "20261127122523"
+      "version": "20261128104810"
     }
   ],
   "repo": "plugin",

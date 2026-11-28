@@ -44,13 +44,27 @@ git add -A
 git commit -q -m "Publish plugin build $build" || true
 git push -q origin HEAD:main
 cp "$prx" "/tmp/mc195_lce_session_${build}.prx"
-# Online builds embed the anticheat report key: their releases are drafts (owner-only), never public.
-gh release create "$build" "/tmp/mc195_lce_session_${build}.prx" --draft --title "$build" \
+# Keyless public builds (r10-public-*, secret scan clean) are public so the desktop installer can download them.
+# Anything else may embed the anticheat report key: those releases stay drafts (owner-only), never public.
+draft=--draft
+if [[ $build == r10-public-* ]]; then
+  key_args=()
+  for k in /home/codey/minecraft-lce-work/lce-playtest-de75uaq9/client-report.key /home/codey/minecraft-lce-work/lce-playtest-de75uaq9/backend.key; do
+    [[ -f $k ]] && key_args+=(--known-secret "$k")
+  done
+  scan_dir=$(dirname "$(ls /home/codey/minecraft-lce-work/agent-*/scripts/secret_scan.py 2>/dev/null | head -1)" 2>/dev/null)
+  if [[ -n $scan_dir ]] && python3 "$scan_dir/secret_scan.py" --no-repo --binary "$prx" "${key_args[@]}" >/dev/null; then
+    draft=
+  else
+    echo "secret scan failed or unavailable: releases stay drafts" >&2
+  fi
+fi
+gh release create "$build" "/tmp/mc195_lce_session_${build}.prx" $draft --title "$build" \
   --notes "Official LCE Server plugin build $build (PRX sha256 $sha)" >/dev/null 2>&1 \
   || gh release upload "$build" "/tmp/mc195_lce_session_${build}.prx" --clobber
 rm -f "/tmp/mc195_lce_session_${build}.prx"
 stage=$(mktemp -d); cp "$prx" "$stage/mc195_lce_session.prx"
-gh release create "session-plugin-v$version" "$stage/mc195_lce_session.prx" --draft --title "Auto-update $build" \
+gh release create "session-plugin-v$version" "$stage/mc195_lce_session.prx" $draft --title "Auto-update $build" \
   --notes "Signed auto-update channel for $build" >/dev/null 2>&1 \
   || gh release upload "session-plugin-v$version" "$stage/mc195_lce_session.prx" --clobber
 rm -rf "$stage"
